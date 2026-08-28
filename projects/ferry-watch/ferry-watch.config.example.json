@@ -31,25 +31,6 @@
   "statePath": "./state/ferry-watch.state.json",
   "watches": [
     {
-      "id": "santander-portsmouth",
-      "label": "Santander to Portsmouth",
-      "enabled": true,
-      "provider": "brittany-ferries",
-      "routeFrom": "Santander",
-      "routeTo": "Portsmouth",
-      "dateFrom": "2026-09-25",
-      "dateTo": "2026-10-07",
-      "departAfter": null,
-      "departBefore": null,
-      "passengers": 2,
-      "pets": 1,
-      "vehicle": "car",
-      "wantKinds": [
-        "pet-friendly-cabin"
-      ],
-      "maxPrice": null
-    },
-    {
       "id": "portsmouth-santander",
       "label": "Portsmouth to Santander",
       "enabled": true,
@@ -69,12 +50,12 @@
       "maxPrice": null
     },
     {
-      "id": "bilbao-portsmouth",
-      "label": "Bilbao to Portsmouth",
-      "enabled": false,
+      "id": "portsmouth-bilbao",
+      "label": "Portsmouth to Bilbao",
+      "enabled": true,
       "provider": "brittany-ferries",
-      "routeFrom": "Bilbao",
-      "routeTo": "Portsmouth",
+      "routeFrom": "Portsmouth",
+      "routeTo": "Bilbao",
       "dateFrom": "2026-09-25",
       "dateTo": "2026-10-07",
       "departAfter": null,
@@ -88,12 +69,12 @@
       "maxPrice": null
     },
     {
-      "id": "portsmouth-bilbao",
-      "label": "Portsmouth to Bilbao",
-      "enabled": false,
+      "id": "plymouth-santander",
+      "label": "Plymouth to Santander",
+      "enabled": true,
       "provider": "brittany-ferries",
-      "routeFrom": "Portsmouth",
-      "routeTo": "Bilbao",
+      "routeFrom": "Plymouth",
+      "routeTo": "Santander",
       "dateFrom": "2026-09-25",
       "dateTo": "2026-10-07",
       "departAfter": null,

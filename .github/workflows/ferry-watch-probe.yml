@@ -1,0 +1,90 @@
+# Diagnostic run against the live Brittany Ferries site.
+#
+# The point of this workflow is that a GitHub runner can reach the operator's
+# website, which is what makes calibration possible without a laptop. It reports
+# what the booking site returns so the selector pack can be corrected.
+name: ferry-watch probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      startUrl:
+        description: "URL to probe (blank = the configured search URL)"
+        required: false
+        default: ""
+      wait:
+        description: "Seconds to let the page settle"
+        required: false
+        default: "20"
+  # Also runs whenever this file changes, so the probe can be re-triggered
+  # from a branch without waiting for it to reach the default branch.
+  push:
+    branches: [claude/custom-dog-boats-email-awyeg5]
+    paths: [".github/workflows/ferry-watch-probe.yml"]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: projects/ferry-watch
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: projects/ferry-watch/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Establishes whether the operator serves a runner at all, before any
+      # parsing question is on the table.
+      - name: Reachability
+        continue-on-error: true
+        run: |
+          for host in www.brittany-ferries.co.uk www.brittanyferries.com; do
+            echo "=== $host ==="
+            curl -sS -o /dev/null -D - -m 30 "https://$host/" \
+              -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' \
+              | head -20 || echo "request failed"
+            echo
+          done
+
+      - name: Prepare config
+        run: cp ferry-watch.config.example.json ferry-watch.config.json
+
+      - name: Probe
+        continue-on-error: true
+        # Inputs go through the environment rather than being interpolated into
+        # the script, so they cannot inject shell.
+        env:
+          START_URL: ${{ github.event.inputs.startUrl }}
+          WAIT: ${{ github.event.inputs.wait || '20' }}
+        run: |
+          if [ -n "$START_URL" ]; then
+            pnpm exec tsx src/cli.ts probe --wait "$WAIT" --start-url "$START_URL"
+          else
+            pnpm exec tsx src/cli.ts probe --wait "$WAIT"
+          fi
+
+      # The captured payloads are the raw material for fixing the parser, so
+      # keep them even when the probe itself reported nothing useful.
+      - name: Upload captured payloads
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferry-watch-calibration
+          path: projects/ferry-watch/calibration/
+          if-no-files-found: warn
+          retention-days: 14

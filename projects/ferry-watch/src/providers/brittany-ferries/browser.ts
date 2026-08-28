@@ -30,6 +30,10 @@ export interface RecordResult {
   pageUrls: string[];
   /** Where the browser ended up when recording stopped. */
   finalUrl: string;
+  /** Page title — reveals bot walls ("Just a moment...") at a glance. */
+  title: string;
+  /** Size of the final page's HTML, as a crude "did we get a real page" signal. */
+  htmlLength: number;
 }
 
 export interface BrowserSession {
@@ -59,6 +63,7 @@ interface PlaywrightPage {
   click(selector: string, options: { timeout: number }): Promise<void>;
   content(): Promise<string>;
   url(): string;
+  title(): Promise<string>;
 }
 
 interface PlaywrightContext {
@@ -183,7 +188,16 @@ export async function launchBrowser(
       await stop();
       await Promise.all(pending);
 
-      return { captured, pageUrls, finalUrl: page.url() };
+      const title = await page.title().catch(() => "");
+      const html = await page.content().catch(() => "");
+
+      return {
+        captured,
+        pageUrls,
+        finalUrl: page.url(),
+        title,
+        htmlLength: html.length,
+      };
     },
 
     async pause(ms) {

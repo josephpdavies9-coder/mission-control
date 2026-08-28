@@ -5,7 +5,7 @@ import type { Config } from "../../config.js";
 import { extractSailings } from "./parse.js";
 import { buildUrl, resolveSelectors } from "./selectors.js";
 import { createInterface } from "node:readline/promises";
-import { launchBrowser } from "./browser.js";
+import { launchBrowser, type RecordResult } from "./browser.js";
 import { suggestSearchUrl } from "./suggest.js";
 
 /**
@@ -126,6 +126,140 @@ export function suggestPattern(urls: string[]): string {
  * search URL. Letting the user drive removes the guess entirely — whatever URL
  * their search lands on is, by definition, the right one.
  */
+/**
+ * Shared analysis for both recording modes: writes payloads to disk and reports
+ * what was found — which endpoints carried availability, and what the search
+ * URL looks like as a reusable template.
+ */
+async function analyseRecording(
+  result: RecordResult,
+  watch: Watch,
+  outputDir: string,
+): Promise<void> {
+  console.log(`\nPage title:  ${result.title || "(none)"}`);
+  console.log(`Final URL:   ${result.finalUrl}`);
+  console.log(`HTML size:   ${result.htmlLength} bytes`);
+  console.log(`Pages seen:  ${result.pageUrls.length}`);
+  console.log(`JSON responses captured: ${result.captured.length}\n`);
+
+  if (/just a moment|access denied|are you a robot|checking your browser/i.test(result.title)) {
+    console.log(
+      "WARNING: that page title looks like a bot wall, not the booking site.\n" +
+        "Availability cannot be read until that is passed.\n",
+    );
+  }
+
+  const dir = resolve(outputDir);
+  await mkdir(dir, { recursive: true });
+
+  const hits: string[] = [];
+  for (const [index, response] of result.captured.entries()) {
+    const sailings = extractSailings(response.body, {
+      routeFrom: watch.routeFrom,
+      routeTo: watch.routeTo,
+      bookingUrl: result.finalUrl,
+    });
+    const size = JSON.stringify(response.body).length;
+    if (sailings.length > 0) {
+      hits.push(response.url);
+      console.log(`HIT  ${sailings.length} sailing(s)  ${response.url}`);
+    } else {
+      console.log(`     ${String(size).padStart(8)} bytes  ${response.url}`);
+    }
+    await writeFile(
+      resolve(dir, `record-${String(index).padStart(3, "0")}.json`),
+      `${JSON.stringify({ url: response.url, sailings, body: response.body }, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  await writeFile(
+    resolve(dir, "pages.json"),
+    `${JSON.stringify(
+      {
+        title: result.title,
+        finalUrl: result.finalUrl,
+        htmlLength: result.htmlLength,
+        pageUrls: result.pageUrls,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  console.log(`\nPayloads written to ${dir}`);
+
+  const suggestion = suggestSearchUrl([...result.pageUrls, result.finalUrl], watch);
+
+  if (suggestion) {
+    console.log("\nSearch URL derived from the observed navigation:");
+    console.log(`  source: ${suggestion.sourceUrl}`);
+    if (suggestion.missing.length > 0) {
+      console.log(
+        `  NOTE: could not locate ${suggestion.missing.join(", ")} — the site` +
+          " probably uses internal codes for these.",
+      );
+      for (const [key, value] of suggestion.queryParams) {
+        console.log(`    ${key} = ${value}`);
+      }
+    }
+  } else {
+    console.log(
+      "\nCould not recognise a search URL among the pages visited. See pages.json.",
+    );
+  }
+
+  if (hits.length === 0) {
+    console.log(
+      "\nNo response contained recognisable pet availability — either the sailing" +
+        "\nlist had not loaded, or it lives behind a further step.",
+    );
+  }
+
+  console.log("\nPaste into browser.selectors in your config:\n");
+  console.log(
+    JSON.stringify(
+      {
+        ...(suggestion ? { searchUrl: suggestion.template } : {}),
+        ...(hits.length > 0 ? { responseUrlPattern: suggestPattern(hits) } : {}),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+/**
+ * Non-interactive calibration for CI, where nobody can press a key. Loads a URL,
+ * lets the page settle for a fixed period, then reports everything it saw.
+ */
+export async function probeCalibration(
+  config: Config,
+  watch: Watch,
+  outputDir: string,
+  startUrl: string,
+  waitSeconds: number,
+): Promise<void> {
+  console.log(`Probing ${startUrl}`);
+  console.log(`Waiting ${waitSeconds}s for the page to settle.\n`);
+
+  const session = await launchBrowser({
+    headless: true,
+    timeoutMs: config.browser.timeoutSeconds * 1000,
+    responseUrlPattern: ".",
+    executablePath: config.browser.executablePath,
+  });
+
+  try {
+    const result = await session.record(startUrl, async () => {
+      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+    });
+    await analyseRecording(result, watch, outputDir);
+  } finally {
+    await session.close();
+  }
+}
+
 export async function recordCalibration(
   config: Config,
   watch: Watch,
@@ -153,87 +287,7 @@ export async function recordCalibration(
       await rl.question("Press Enter when the sailing list is on screen... ");
       rl.close();
     });
-
-    console.log(
-      `\nRecorded ${result.captured.length} JSON response(s) across ` +
-        `${result.pageUrls.length} page(s).\n`,
-    );
-
-    const dir = resolve(outputDir);
-    await mkdir(dir, { recursive: true });
-
-    const hits: string[] = [];
-    for (const [index, response] of result.captured.entries()) {
-      const sailings = extractSailings(response.body, {
-        routeFrom: watch.routeFrom,
-        routeTo: watch.routeTo,
-        bookingUrl: result.finalUrl,
-      });
-      if (sailings.length > 0) {
-        hits.push(response.url);
-        console.log(`HIT  ${sailings.length} sailing(s)  ${response.url}`);
-      }
-      await writeFile(
-        resolve(dir, `record-${String(index).padStart(3, "0")}.json`),
-        `${JSON.stringify({ url: response.url, sailings, body: response.body }, null, 2)}\n`,
-        "utf8",
-      );
-    }
-
-    await writeFile(
-      resolve(dir, "pages.json"),
-      `${JSON.stringify({ pageUrls: result.pageUrls, finalUrl: result.finalUrl }, null, 2)}\n`,
-      "utf8",
-    );
-    console.log(`\nEverything written to ${dir}`);
-
-    const suggestion = suggestSearchUrl(
-      [...result.pageUrls, result.finalUrl],
-      watch,
-    );
-
-    if (!suggestion) {
-      console.log(
-        "\nCould not recognise a search URL. Look at pages.json and build\n" +
-          "browser.selectors.searchUrl by hand, using {from} {to} {date}\n" +
-          "{passengers} {pets} where those values appear.",
-      );
-    } else {
-      console.log("\nSearch URL derived from your search:");
-      console.log(`  source: ${suggestion.sourceUrl}`);
-      if (suggestion.missing.length > 0) {
-        console.log(
-          `  NOTE: could not locate ${suggestion.missing.join(", ")} in the URL — ` +
-            "the site probably uses internal codes for these.",
-        );
-        if (suggestion.queryParams.length > 0) {
-          console.log("  Query parameters, so you can map them yourself:");
-          for (const [key, value] of suggestion.queryParams) {
-            console.log(`    ${key} = ${value}`);
-          }
-        }
-      }
-    }
-
-    if (hits.length === 0) {
-      console.log(
-        "\nNo response contained recognisable pet availability. Either the sailing\n" +
-          "list had not loaded when you pressed Enter, or the pet options live behind\n" +
-          "a further step — re-run and go one page deeper.",
-      );
-    }
-
-    console.log("\nPaste into browser.selectors in your config:\n");
-    console.log(
-      JSON.stringify(
-        {
-          ...(suggestion ? { searchUrl: suggestion.template } : {}),
-          ...(hits.length > 0 ? { responseUrlPattern: suggestPattern(hits) } : {}),
-        },
-        null,
-        2,
-      ),
-    );
+    await analyseRecording(result, watch, outputDir);
   } finally {
     await session.close();
   }

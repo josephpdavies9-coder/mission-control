@@ -7,6 +7,7 @@ import { createMailer } from "./notify/index.js";
 import { renderAlert } from "./notify/template.js";
 import {
   calibrate,
+  probeCalibration,
   recordCalibration,
 } from "./providers/brittany-ferries/calibrate.js";
 
@@ -19,6 +20,7 @@ Usage:
   ferry-watch watch      [options]   Check on a loop at polling.intervalMinutes
   ferry-watch calibrate  [options]   Capture what the booking site returns
                                      (--record to drive the site yourself)
+  ferry-watch probe      [options]   Non-interactive calibration, for CI logs
   ferry-watch test-email [options]   Send a sample alert to prove delivery works
 
 Options:
@@ -27,7 +29,8 @@ Options:
   --to <date>        Override every watch's end date (YYYY-MM-DD)
   --only <ids>       Comma-separated watch ids to check
   --record           calibrate: open a real browser and record your own search
-  --start-url <url>  calibrate --record: where to start (default: operator home)
+  --start-url <url>  calibrate/probe: where to start (default: operator home)
+  --wait <seconds>   probe: how long to let the page settle (default: 15)
   --provider <id>    Override every watch's provider (e.g. mock)
   --dry-run          Print emails instead of sending; leaves state untouched
   --quiet            Only print errors
@@ -42,6 +45,7 @@ interface Cli {
   only: string[];
   record: boolean;
   startUrl: string | null;
+  wait: number;
   provider: string | null;
   dryRun: boolean;
   quiet: boolean;
@@ -58,6 +62,7 @@ export function parseCli(argv: string[]): Cli | null {
       only: { type: "string", default: "" },
       record: { type: "boolean", default: false },
       "start-url": { type: "string" },
+      wait: { type: "string" },
       provider: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       quiet: { type: "boolean", default: false },
@@ -75,6 +80,7 @@ export function parseCli(argv: string[]): Cli | null {
     only: (values.only ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     record: values.record ?? false,
     startUrl: values["start-url"] ?? null,
+    wait: Number(values.wait ?? 15) || 15,
     provider: values.provider ?? null,
     dryRun: values["dry-run"] ?? false,
     quiet: values.quiet ?? false,
@@ -148,6 +154,19 @@ async function main(): Promise<number> {
       }
 
       await calibrate(config, watch, "./calibration");
+      return 0;
+    }
+
+    case "probe": {
+      const watch = config.watches[0];
+      if (!watch) throw new Error("No watches configured to probe with.");
+      await probeCalibration(
+        config,
+        watch,
+        "./calibration",
+        cli.startUrl ?? defaultStartUrl(config),
+        cli.wait,
+      );
       return 0;
     }
 
