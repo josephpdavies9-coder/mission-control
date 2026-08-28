@@ -25,6 +25,7 @@ export class BrittanyFerriesProvider implements AvailabilityProvider {
       headless: context.browser.headless,
       timeoutMs: context.browser.timeoutSeconds * 1000,
       responseUrlPattern: selectors.responseUrlPattern,
+      executablePath: context.browser.executablePath,
     });
 
     const sailings = new Map<string, Sailing>();

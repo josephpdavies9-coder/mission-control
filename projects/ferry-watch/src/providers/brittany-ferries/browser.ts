@@ -14,6 +14,8 @@ export interface BrowserOptions {
   timeoutMs: number;
   /** JSON responses whose URL matches this regex source are captured. */
   responseUrlPattern: string;
+  /** Explicit Chromium binary, when the bundled one is not the right build. */
+  executablePath?: string | null;
 }
 
 export interface VisitOptions {
@@ -21,8 +23,22 @@ export interface VisitOptions {
   readySelector: string;
 }
 
+/** Everything observed while the user drove the site by hand. */
+export interface RecordResult {
+  captured: CapturedResponse[];
+  /** HTML page URLs navigated through, in order — the search URL is among these. */
+  pageUrls: string[];
+  /** Where the browser ended up when recording stopped. */
+  finalUrl: string;
+}
+
 export interface BrowserSession {
   visit(url: string, options: VisitOptions): Promise<CapturedResponse[]>;
+  /**
+   * Opens a page and records every JSON response and page navigation until
+   * `stop` resolves, so a human can click the booking flow themselves.
+   */
+  record(startUrl: string, stop: () => Promise<void>): Promise<RecordResult>;
   pause(ms: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -42,6 +58,7 @@ interface PlaywrightPage {
   waitForSelector(selector: string, options: { timeout: number }): Promise<unknown>;
   click(selector: string, options: { timeout: number }): Promise<void>;
   content(): Promise<string>;
+  url(): string;
 }
 
 interface PlaywrightContext {
@@ -77,7 +94,10 @@ export async function launchBrowser(
 ): Promise<BrowserSession> {
   const { chromium } = await importPlaywright();
   const pattern = new RegExp(options.responseUrlPattern, "i");
-  const browser = await chromium.launch({ headless: options.headless });
+  const browser = await chromium.launch({
+    headless: options.headless,
+    ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+  });
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "en-GB",
@@ -123,6 +143,47 @@ export async function launchBrowser(
       await Promise.all(pending);
 
       return captured;
+    },
+
+    async record(startUrl, stop) {
+      const page = await context.newPage();
+      const captured: CapturedResponse[] = [];
+      const pageUrls: string[] = [];
+      const pending: Promise<void>[] = [];
+
+      page.on("response", (response) => {
+        if (!response.ok()) return;
+        const type = response.headers()["content-type"] ?? "";
+
+        // Page loads tell us the shape of the real search URL.
+        if (type.includes("text/html")) {
+          const url = response.url();
+          if (pageUrls[pageUrls.length - 1] !== url) pageUrls.push(url);
+          return;
+        }
+
+        // Recording captures every JSON response, not just the usual pattern —
+        // the whole point is to discover which endpoint carries availability.
+        if (!type.includes("json")) return;
+        pending.push(
+          response
+            .json()
+            .then((body) => {
+              captured.push({ url: response.url(), body });
+            })
+            .catch(() => undefined),
+        );
+      });
+
+      await page.goto(startUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: options.timeoutMs,
+      });
+
+      await stop();
+      await Promise.all(pending);
+
+      return { captured, pageUrls, finalUrl: page.url() };
     },
 
     async pause(ms) {

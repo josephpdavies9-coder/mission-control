@@ -50,7 +50,7 @@ pnpm exec tsx src/cli.ts test-email
 **Then calibrate — this is not optional.** See the section below.
 
 ```bash
-pnpm exec tsx src/cli.ts calibrate
+pnpm exec tsx src/cli.ts calibrate --record
 ```
 
 Once calibration reports hits, run it for real:
@@ -80,11 +80,12 @@ second watch for the return. Don't drop `intervalMinutes` below 30.
 |---|---|
 | `check` | One sweep. Emails anything new, saves state, exits. Exit code 1 if every watch failed. |
 | `watch` | Sweeps forever at `polling.intervalMinutes` (plus jitter). |
-| `calibrate` | Records what the booking site actually returns — see below. |
+| `calibrate` | Records what the booking site actually returns. `--record` opens a browser and watches you search — see below. |
 | `test-email` | Sends a sample alert so you can confirm delivery. |
 
 Options: `--config <path>`, `--from <date>`, `--to <date>`, `--only <ids>`,
-`--provider <id>`, `--dry-run`, `--quiet`.
+`--provider <id>`, `--dry-run`, `--quiet`, plus `--record` / `--start-url <url>`
+for `calibrate`.
 
 ## Calibration — read this before trusting a live run
 
@@ -93,23 +94,68 @@ without notice. `ferry-watch` therefore reads availability out of the JSON their
 own booking pages fetch, using deliberately shape-tolerant parsing rather than
 one hard-coded schema.
 
-The search URL and response pattern shipped in
-`src/providers/brittany-ferries/selectors.ts` are a **starting point, not
-verified fact** — they were written without live access to the site. Before you
-rely on this, calibrate it:
+The search URL shipped in `src/providers/brittany-ferries/selectors.ts` is a
+**starting point, not verified fact** — it was written without live access to
+the site. Calibration replaces that guess with reality.
+
+### Recommended: record your own search
+
+Let the tool watch while you use the site normally. This is the reliable path,
+because whatever URL your search lands on is by definition the right one:
+
+```bash
+pnpm exec tsx src/cli.ts calibrate --record
+```
+
+A real browser window opens at the Brittany Ferries home page. In it:
+
+1. Search your route and date (e.g. Santander to Portsmouth, 25 Sept 2026).
+2. Say you are travelling with a pet.
+3. Click through to **the page that lists sailings and cabin options** — the pet
+   cabin has to be on screen, or there is nothing to record.
+4. Return to the terminal and press Enter.
+
+It writes everything to `./calibration/` and prints a ready-to-paste block:
+
+```json
+{
+  "searchUrl": "https://www.brittany-ferries.co.uk/book?from={from}&to={to}&date={date}&adults=2",
+  "responseUrlPattern": "(availability)"
+}
+```
+
+Paste that into `browser.selectors` in your config. Where a value could not be
+found in the URL it says so and lists the query parameters, so you can map the
+site's internal codes (ports are often `SDR`/`PME` rather than names) onto
+`{from}` / `{to}` / `{passengers}` / `{pets}` yourself.
+
+### Unattended alternative
+
+If you already know the search URL, `calibrate` without `--record` loads it
+directly and reports which responses carried availability:
 
 ```bash
 pnpm exec tsx src/cli.ts calibrate
 ```
 
-This opens the booking search for your first watch, captures every JSON response
-the page fetches, writes them to `./calibration/`, reports which ones contained
-recognisable pet availability, and prints the config to paste into
-`browser.selectors`. If nothing is found, set `"headless": false` and re-run to
-watch what the page actually does.
+### Confirming it worked
 
-Once `check` returns sailings, you are calibrated. If the site later changes,
-the consecutive-failure alert will email you rather than leaving you in silence.
+```bash
+pnpm exec tsx src/cli.ts check --dry-run --from 2026-09-25 --to 2026-10-07
+```
+
+Real sailings in the output means you are calibrated. If the site later changes,
+the consecutive-failure alert emails you rather than leaving you in silence.
+
+### If the browser will not start
+
+Playwright needs a Chromium build matching its own version. If launching fails
+with "Executable doesn't exist", either run `pnpm exec playwright install
+chromium`, or point at a browser you already have:
+
+```json
+{ "browser": { "executablePath": "/path/to/chrome" } }
+```
 
 ## Configuration
 
@@ -181,7 +227,7 @@ and delivery are all operator-agnostic.
 ## Development
 
 ```bash
-pnpm test          # 90 tests
+pnpm test          # 102 tests
 pnpm check         # typecheck
 pnpm verify        # both
 ```

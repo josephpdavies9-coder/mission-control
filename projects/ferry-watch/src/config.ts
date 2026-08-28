@@ -117,6 +117,11 @@ export const ConfigSchema = z.object({
       timeoutSeconds: z.number().int().min(10).max(600).default(120),
       /** Overrides for the selector pack — see providers/brittany-ferries/selectors.ts. */
       selectors: z.record(z.string(), z.string()).default({}),
+      /**
+       * Explicit Chromium binary. Only needed when the system browser does not
+       * match the installed Playwright build; null lets Playwright choose.
+       */
+      executablePath: z.string().nullable().default(null),
     })
     .prefault({}),
   statePath: z.string().default("./state/ferry-watch.state.json"),

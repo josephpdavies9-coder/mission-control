@@ -5,7 +5,12 @@ import { applyDateOverride, loadConfig } from "./config.js";
 import { runOnce } from "./run.js";
 import { createMailer } from "./notify/index.js";
 import { renderAlert } from "./notify/template.js";
-import { calibrate } from "./providers/brittany-ferries/calibrate.js";
+import {
+  calibrate,
+  recordCalibration,
+} from "./providers/brittany-ferries/calibrate.js";
+
+const DEFAULT_HOME = "https://www.brittany-ferries.co.uk/";
 
 const USAGE = `ferry-watch — pet-friendly ferry cabin alerts by email
 
@@ -13,6 +18,7 @@ Usage:
   ferry-watch check      [options]   Check once, email anything new, exit
   ferry-watch watch      [options]   Check on a loop at polling.intervalMinutes
   ferry-watch calibrate  [options]   Capture what the booking site returns
+                                     (--record to drive the site yourself)
   ferry-watch test-email [options]   Send a sample alert to prove delivery works
 
 Options:
@@ -20,6 +26,8 @@ Options:
   --from <date>      Override every watch's start date (YYYY-MM-DD)
   --to <date>        Override every watch's end date (YYYY-MM-DD)
   --only <ids>       Comma-separated watch ids to check
+  --record           calibrate: open a real browser and record your own search
+  --start-url <url>  calibrate --record: where to start (default: operator home)
   --provider <id>    Override every watch's provider (e.g. mock)
   --dry-run          Print emails instead of sending; leaves state untouched
   --quiet            Only print errors
@@ -32,6 +40,8 @@ interface Cli {
   from: string | null;
   to: string | null;
   only: string[];
+  record: boolean;
+  startUrl: string | null;
   provider: string | null;
   dryRun: boolean;
   quiet: boolean;
@@ -46,6 +56,8 @@ export function parseCli(argv: string[]): Cli | null {
       from: { type: "string" },
       to: { type: "string" },
       only: { type: "string", default: "" },
+      record: { type: "boolean", default: false },
+      "start-url": { type: "string" },
       provider: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       quiet: { type: "boolean", default: false },
@@ -61,6 +73,8 @@ export function parseCli(argv: string[]): Cli | null {
     from: values.from ?? null,
     to: values.to ?? null,
     only: (values.only ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    record: values.record ?? false,
+    startUrl: values["start-url"] ?? null,
     provider: values.provider ?? null,
     dryRun: values["dry-run"] ?? false,
     quiet: values.quiet ?? false,
@@ -122,6 +136,17 @@ async function main(): Promise<number> {
         config.watches.find((w) => cli.only.length === 0 || cli.only.includes(w.id)) ??
         config.watches[0];
       if (!watch) throw new Error("No watches configured to calibrate against.");
+
+      if (cli.record) {
+        await recordCalibration(
+          config,
+          watch,
+          "./calibration",
+          cli.startUrl ?? defaultStartUrl(config),
+        );
+        return 0;
+      }
+
       await calibrate(config, watch, "./calibration");
       return 0;
     }
@@ -169,6 +194,16 @@ async function main(): Promise<number> {
     default:
       process.stderr.write(`Unknown command "${cli.command}".\n\n${USAGE}`);
       return 2;
+  }
+}
+
+/** The operator's home page, derived from the configured search URL. */
+function defaultStartUrl(config: Awaited<ReturnType<typeof loadConfig>>): string {
+  const configured = config.browser.selectors.searchUrl;
+  try {
+    return new URL(configured ?? DEFAULT_HOME).origin;
+  } catch {
+    return DEFAULT_HOME;
   }
 }
 
