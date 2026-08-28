@@ -26,11 +26,15 @@ you about, and emails you the moment something new appears.
 ```bash
 cd projects/ferry-watch
 pnpm install
-pnpm exec playwright install chromium     # only needed for live checks
+pnpm exec playwright install chromium     # needed for live checks
 
 cp ferry-watch.config.example.json ferry-watch.config.json
-$EDITOR ferry-watch.config.json           # set your email + routes + dates
+$EDITOR ferry-watch.config.json           # set your email address
 ```
+
+The shipped config already watches **Santander↔Portsmouth in both directions**.
+Bilbao↔Portsmouth watches are included but disabled — flip `"enabled": true` if
+you want them too.
 
 Prove the plumbing works before pointing it at a real site:
 
@@ -43,12 +47,32 @@ export FERRY_WATCH_SMTP_PASSWORD='your-app-password'
 pnpm exec tsx src/cli.ts test-email
 ```
 
-Then run it for real:
+**Then calibrate — this is not optional.** See the section below.
 
 ```bash
-pnpm exec tsx src/cli.ts check     # one sweep, then exit — good for cron
-pnpm exec tsx src/cli.ts watch     # long-running loop
+pnpm exec tsx src/cli.ts calibrate
 ```
+
+Once calibration reports hits, run it for real:
+
+```bash
+# One sweep over a specific window
+pnpm exec tsx src/cli.ts check --from 2026-09-25 --to 2026-10-07
+
+# Or leave it watching that window
+pnpm exec tsx src/cli.ts watch --from 2026-09-25 --to 2026-10-07
+```
+
+`--from` / `--to` override the dates in every watch, so a one-off search never
+means editing JSON. Omit them to use the dates in the config.
+
+### How much traffic a wide window costs
+
+Each sweep is **one page load per date per enabled watch**. A 13-day window
+across two directions is 26 loads a sweep — hourly, that is ~620 loads a day
+against someone else's website. If you already know your travel days, narrow the
+window (e.g. `--from 2026-09-25 --to 2026-09-27` for the outbound) and add a
+second watch for the return. Don't drop `intervalMinutes` below 30.
 
 ## Commands
 
@@ -59,7 +83,8 @@ pnpm exec tsx src/cli.ts watch     # long-running loop
 | `calibrate` | Records what the booking site actually returns — see below. |
 | `test-email` | Sends a sample alert so you can confirm delivery. |
 
-Options: `--config <path>`, `--only <ids>`, `--provider <id>`, `--dry-run`, `--quiet`.
+Options: `--config <path>`, `--from <date>`, `--to <date>`, `--only <ids>`,
+`--provider <id>`, `--dry-run`, `--quiet`.
 
 ## Calibration — read this before trusting a live run
 
@@ -121,17 +146,17 @@ block outbound SMTP), or `console` (prints instead of sending).
 Cron, every 30 minutes:
 
 ```cron
-*/30 * * * * cd ~/mission-control/projects/ferry-watch && \
+0 * * * * cd ~/mission-control/projects/ferry-watch && \
   FERRY_WATCH_SMTP_PASSWORD='...' /usr/local/bin/pnpm exec tsx src/cli.ts check --quiet \
-  >> ~/.ferry-watch.log 2>&1
+  --from 2026-09-25 --to 2026-10-07 >> ~/.ferry-watch.log 2>&1
 ```
 
 On macOS, `launchd` survives reboots more reliably — or simply leave
 `pnpm exec tsx src/cli.ts watch` running in a terminal.
 
-**Be a considerate guest.** Every sweep is one page load per date per watch
-against someone else's website. Thirty minutes is frequent enough to catch a
-cancellation; one minute is not neighbourly and risks getting you blocked.
+**Be a considerate guest.** See the traffic note above. Thirty to sixty minutes
+is frequent enough to catch a cancellation; one minute is not neighbourly and
+risks getting you blocked.
 
 ## Architecture
 
@@ -156,7 +181,7 @@ and delivery are all operator-agnostic.
 ## Development
 
 ```bash
-pnpm test          # 85 tests
+pnpm test          # 90 tests
 pnpm check         # typecheck
 pnpm verify        # both
 ```

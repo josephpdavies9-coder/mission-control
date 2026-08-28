@@ -160,3 +160,32 @@ export async function loadConfig(path: string): Promise<Config> {
 
   return result.data;
 }
+
+/**
+ * Applies a date window from the command line to every watch, so a one-off
+ * search does not require editing the config file. Re-validates through the
+ * schema, which catches a reversed or malformed range.
+ */
+export function applyDateOverride(
+  config: Config,
+  from: string | null,
+  to: string | null,
+): Config {
+  if (from === null && to === null) return config;
+
+  const watches = config.watches.map((watch) => ({
+    ...watch,
+    dateFrom: from ?? watch.dateFrom,
+    dateTo: to ?? watch.dateTo,
+  }));
+
+  const result = ConfigSchema.safeParse({ ...config, watches });
+  if (!result.success) {
+    // Every watch reports the same problem, so say it once.
+    const issues = [...new Set(result.error.issues.map((issue) => issue.message))]
+      .map((message) => `  - ${message}`)
+      .join("\n");
+    throw new Error(`--from/--to produced an invalid date window:\n${issues}`);
+  }
+  return result.data;
+}

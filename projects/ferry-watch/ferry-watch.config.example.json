@@ -1,7 +1,9 @@
 {
   "email": {
     "from": "ferry-watch@your-domain.example",
-    "to": ["you@example.com"],
+    "to": [
+      "you@example.com"
+    ],
     "subjectPrefix": "[ferry-watch]",
     "delivery": {
       "transport": "smtp",
@@ -13,8 +15,8 @@
     }
   },
   "polling": {
-    "intervalMinutes": 30,
-    "jitterSeconds": 90
+    "intervalMinutes": 60,
+    "jitterSeconds": 300
   },
   "alerts": {
     "renotifyAfterHours": 24,
@@ -29,37 +31,79 @@
   "statePath": "./state/ferry-watch.state.json",
   "watches": [
     {
-      "id": "santander-portsmouth-sep",
-      "label": "Santander to Portsmouth — September",
+      "id": "santander-portsmouth",
+      "label": "Santander to Portsmouth",
       "enabled": true,
       "provider": "brittany-ferries",
       "routeFrom": "Santander",
       "routeTo": "Portsmouth",
-      "dateFrom": "2026-09-10",
-      "dateTo": "2026-09-20",
+      "dateFrom": "2026-09-25",
+      "dateTo": "2026-10-07",
       "departAfter": null,
       "departBefore": null,
       "passengers": 2,
       "pets": 1,
       "vehicle": "car",
-      "wantKinds": ["pet-friendly-cabin"],
+      "wantKinds": [
+        "pet-friendly-cabin"
+      ],
       "maxPrice": null
     },
     {
-      "id": "portsmouth-santander-oct",
-      "label": "Portsmouth to Santander — October return",
+      "id": "portsmouth-santander",
+      "label": "Portsmouth to Santander",
       "enabled": true,
       "provider": "brittany-ferries",
       "routeFrom": "Portsmouth",
       "routeTo": "Santander",
-      "dateFrom": "2026-10-01",
-      "dateTo": "2026-10-10",
+      "dateFrom": "2026-09-25",
+      "dateTo": "2026-10-07",
       "departAfter": null,
       "departBefore": null,
       "passengers": 2,
       "pets": 1,
       "vehicle": "car",
-      "wantKinds": ["pet-friendly-cabin", "kennel"],
+      "wantKinds": [
+        "pet-friendly-cabin"
+      ],
+      "maxPrice": null
+    },
+    {
+      "id": "bilbao-portsmouth",
+      "label": "Bilbao to Portsmouth",
+      "enabled": false,
+      "provider": "brittany-ferries",
+      "routeFrom": "Bilbao",
+      "routeTo": "Portsmouth",
+      "dateFrom": "2026-09-25",
+      "dateTo": "2026-10-07",
+      "departAfter": null,
+      "departBefore": null,
+      "passengers": 2,
+      "pets": 1,
+      "vehicle": "car",
+      "wantKinds": [
+        "pet-friendly-cabin"
+      ],
+      "maxPrice": null
+    },
+    {
+      "id": "portsmouth-bilbao",
+      "label": "Portsmouth to Bilbao",
+      "enabled": false,
+      "provider": "brittany-ferries",
+      "routeFrom": "Portsmouth",
+      "routeTo": "Bilbao",
+      "dateFrom": "2026-09-25",
+      "dateTo": "2026-10-07",
+      "departAfter": null,
+      "departBefore": null,
+      "passengers": 2,
+      "pets": 1,
+      "vehicle": "car",
+      "wantKinds": [
+        "pet-friendly-cabin"
+      ],
       "maxPrice": null
     }
   ]

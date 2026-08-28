@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { loadConfig } from "./config.js";
+import { applyDateOverride, loadConfig } from "./config.js";
 import { runOnce } from "./run.js";
 import { createMailer } from "./notify/index.js";
 import { renderAlert } from "./notify/template.js";
@@ -17,6 +17,8 @@ Usage:
 
 Options:
   --config <path>    Config file (default: ./ferry-watch.config.json)
+  --from <date>      Override every watch's start date (YYYY-MM-DD)
+  --to <date>        Override every watch's end date (YYYY-MM-DD)
   --only <ids>       Comma-separated watch ids to check
   --provider <id>    Override every watch's provider (e.g. mock)
   --dry-run          Print emails instead of sending; leaves state untouched
@@ -27,6 +29,8 @@ Options:
 interface Cli {
   command: string;
   configPath: string;
+  from: string | null;
+  to: string | null;
   only: string[];
   provider: string | null;
   dryRun: boolean;
@@ -39,6 +43,8 @@ export function parseCli(argv: string[]): Cli | null {
     allowPositionals: true,
     options: {
       config: { type: "string", default: "./ferry-watch.config.json" },
+      from: { type: "string" },
+      to: { type: "string" },
       only: { type: "string", default: "" },
       provider: { type: "string" },
       "dry-run": { type: "boolean", default: false },
@@ -52,6 +58,8 @@ export function parseCli(argv: string[]): Cli | null {
   return {
     command: positionals[0] ?? "check",
     configPath: resolve(values.config ?? "./ferry-watch.config.json"),
+    from: values.from ?? null,
+    to: values.to ?? null,
     only: (values.only ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     provider: values.provider ?? null,
     dryRun: values["dry-run"] ?? false,
@@ -70,7 +78,11 @@ async function main(): Promise<number> {
     ? () => undefined
     : (message: string) => process.stdout.write(`${message}\n`);
 
-  const config = await loadConfig(cli.configPath);
+  const config = applyDateOverride(
+    await loadConfig(cli.configPath),
+    cli.from,
+    cli.to,
+  );
   const runOptions = {
     dryRun: cli.dryRun,
     only: cli.only,

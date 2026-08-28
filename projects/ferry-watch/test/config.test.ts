@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigSchema, loadConfig } from "../src/config.js";
+import { applyDateOverride, ConfigSchema, loadConfig } from "../src/config.js";
 
 const base = {
   email: { from: "a@b.test", to: ["c@d.test"], delivery: { transport: "console" } },
@@ -117,5 +117,45 @@ describe("loadConfig", () => {
   it("loads a valid file", async () => {
     const path = await writeTemp(JSON.stringify(base));
     await expect(loadConfig(path)).resolves.toMatchObject({ statePath: expect.any(String) });
+  });
+});
+
+describe("applyDateOverride", () => {
+  it("leaves the config untouched when neither bound is given", () => {
+    const config = ConfigSchema.parse(base);
+    expect(applyDateOverride(config, null, null)).toBe(config);
+  });
+
+  it("applies a window to every watch", () => {
+    const twoWatches = ConfigSchema.parse({
+      ...base,
+      watches: [base.watches[0], { ...base.watches[0], id: "w2" }],
+    });
+    const overridden = applyDateOverride(twoWatches, "2026-09-25", "2026-10-07");
+    for (const watch of overridden.watches) {
+      expect(watch.dateFrom).toBe("2026-09-25");
+      expect(watch.dateTo).toBe("2026-10-07");
+    }
+  });
+
+  it("allows overriding just one bound", () => {
+    const config = ConfigSchema.parse(base);
+    const overridden = applyDateOverride(config, "2026-09-15", null);
+    expect(overridden.watches[0]?.dateFrom).toBe("2026-09-15");
+    expect(overridden.watches[0]?.dateTo).toBe("2026-09-20");
+  });
+
+  it("rejects a reversed window rather than searching nothing", () => {
+    const config = ConfigSchema.parse(base);
+    expect(() => applyDateOverride(config, "2026-10-07", "2026-09-25")).toThrow(
+      /invalid date window/,
+    );
+  });
+
+  it("rejects a malformed date", () => {
+    const config = ConfigSchema.parse(base);
+    expect(() => applyDateOverride(config, "25/09/2026", null)).toThrow(
+      /invalid date window/,
+    );
   });
 });
