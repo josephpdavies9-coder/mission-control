@@ -1,0 +1,66 @@
+{
+  "email": {
+    "from": "ferry-watch@your-domain.example",
+    "to": ["you@example.com"],
+    "subjectPrefix": "[ferry-watch]",
+    "delivery": {
+      "transport": "smtp",
+      "host": "smtp.gmail.com",
+      "port": 587,
+      "secure": false,
+      "user": "you@gmail.com",
+      "passwordEnv": "FERRY_WATCH_SMTP_PASSWORD"
+    }
+  },
+  "polling": {
+    "intervalMinutes": 30,
+    "jitterSeconds": 90
+  },
+  "alerts": {
+    "renotifyAfterHours": 24,
+    "notifyOnDisappear": false,
+    "errorAfterConsecutiveFailures": 3
+  },
+  "browser": {
+    "headless": true,
+    "timeoutSeconds": 120,
+    "selectors": {}
+  },
+  "statePath": "./state/ferry-watch.state.json",
+  "watches": [
+    {
+      "id": "santander-portsmouth-sep",
+      "label": "Santander to Portsmouth — September",
+      "enabled": true,
+      "provider": "brittany-ferries",
+      "routeFrom": "Santander",
+      "routeTo": "Portsmouth",
+      "dateFrom": "2026-09-10",
+      "dateTo": "2026-09-20",
+      "departAfter": null,
+      "departBefore": null,
+      "passengers": 2,
+      "pets": 1,
+      "vehicle": "car",
+      "wantKinds": ["pet-friendly-cabin"],
+      "maxPrice": null
+    },
+    {
+      "id": "portsmouth-santander-oct",
+      "label": "Portsmouth to Santander — October return",
+      "enabled": true,
+      "provider": "brittany-ferries",
+      "routeFrom": "Portsmouth",
+      "routeTo": "Santander",
+      "dateFrom": "2026-10-01",
+      "dateTo": "2026-10-10",
+      "departAfter": null,
+      "departBefore": null,
+      "passengers": 2,
+      "pets": 1,
+      "vehicle": "car",
+      "wantKinds": ["pet-friendly-cabin", "kennel"],
+      "maxPrice": null
+    }
+  ]
+}

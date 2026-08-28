@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+
+# Local runtime state and secrets — never commit these
+ferry-watch.config.json
+state/
+calibration/
+.env

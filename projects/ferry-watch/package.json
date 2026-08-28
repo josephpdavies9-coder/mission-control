@@ -1,0 +1,39 @@
+{
+  "name": "ferry-watch",
+  "version": "1.0.0",
+  "description": "Pet-friendly ferry cabin availability watcher with email alerts (a self-hosted dog.boats)",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ferry-watch": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "pnpm check && pnpm test",
+    "start": "tsx src/cli.ts",
+    "watch": "tsx src/cli.ts watch",
+    "check-now": "tsx src/cli.ts check",
+    "calibrate": "tsx src/cli.ts calibrate"
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/nodemailer": "^7.0.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "playwright": "^1.50.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": { "optional": true }
+  }
+}
