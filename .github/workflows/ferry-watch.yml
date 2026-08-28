@@ -1,0 +1,104 @@
+# Scheduled pet-friendly cabin watch.
+#
+# Runs entirely on GitHub's infrastructure — no laptop, no always-on machine.
+# Email settings come from repository secrets so nothing personal is committed.
+name: ferry-watch
+
+on:
+  schedule:
+    # Hourly. Each run is one page load per date per route, so a wide date
+    # window is real traffic against the operator — see the README before
+    # making this more frequent.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dateFrom:
+        description: "Start of departure window (YYYY-MM-DD)"
+        required: false
+        default: ""
+      dateTo:
+        description: "End of departure window (YYYY-MM-DD)"
+        required: false
+        default: ""
+      dryRun:
+        description: "Print the email instead of sending it"
+        type: boolean
+        required: false
+        default: false
+
+# Never let two sweeps overlap: they would both read the same state and
+# could double-send.
+concurrency:
+  group: ferry-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: projects/ferry-watch
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: projects/ferry-watch/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Which offers have already been emailed about lives here. A cache miss
+      # means at worst one repeated alert, never a missed one — which is the
+      # right way round for this tool. It is deliberately not committed: this
+      # repository is public.
+      - name: Restore alert state
+        uses: actions/cache@v4
+        with:
+          path: projects/ferry-watch/ci-state
+          key: ferry-watch-state-${{ github.run_id }}
+          restore-keys: |
+            ferry-watch-state-
+
+      - name: Prepare config
+        run: cp ferry-watch.config.example.json ferry-watch.config.json
+
+      - name: Check for availability
+        env:
+          # Personal details come from secrets, never from the committed config.
+          FERRY_WATCH_EMAIL_TO: ${{ secrets.FERRY_WATCH_EMAIL_TO }}
+          FERRY_WATCH_EMAIL_FROM: ${{ secrets.FERRY_WATCH_EMAIL_FROM }}
+          FERRY_WATCH_SMTP_HOST: ${{ secrets.FERRY_WATCH_SMTP_HOST }}
+          FERRY_WATCH_SMTP_USER: ${{ secrets.FERRY_WATCH_SMTP_USER }}
+          FERRY_WATCH_SMTP_PORT: ${{ secrets.FERRY_WATCH_SMTP_PORT }}
+          FERRY_WATCH_SMTP_PASSWORD: ${{ secrets.FERRY_WATCH_SMTP_PASSWORD }}
+          FERRY_WATCH_STATE_PATH: ./ci-state/state.json
+          DATE_FROM: ${{ github.event.inputs.dateFrom }}
+          DATE_TO: ${{ github.event.inputs.dateTo }}
+          DRY_RUN: ${{ github.event.inputs.dryRun }}
+        run: |
+          ARGS=""
+          [ -n "$DATE_FROM" ] && ARGS="$ARGS --from $DATE_FROM"
+          [ -n "$DATE_TO" ] && ARGS="$ARGS --to $DATE_TO"
+          [ "$DRY_RUN" = "true" ] && ARGS="$ARGS --dry-run"
+          pnpm exec tsx src/cli.ts check $ARGS
+
+      # A failed sweep is worth looking at: the payloads say why.
+      - name: Upload captured payloads on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferry-watch-failure
+          path: projects/ferry-watch/calibration/
+          if-no-files-found: ignore
+          retention-days: 7

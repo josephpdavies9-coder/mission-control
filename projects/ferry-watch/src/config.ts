@@ -194,3 +194,44 @@ export function applyDateOverride(
   }
   return result.data;
 }
+
+/**
+ * Overlays settings from the environment. This exists for CI, where the config
+ * file is committed to the repository and must not contain the user's email
+ * address, mail host or account name — those come from secrets instead.
+ *
+ * Passwords are never read here; they continue to come from `passwordEnv`.
+ */
+export function applyEnvOverrides(
+  config: Config,
+  env: NodeJS.ProcessEnv = process.env,
+): Config {
+  const next: Config = {
+    ...config,
+    email: { ...config.email, delivery: { ...config.email.delivery } },
+  };
+
+  const to = env.FERRY_WATCH_EMAIL_TO;
+  if (to) {
+    next.email.to = to.split(",").map((address) => address.trim()).filter(Boolean);
+  }
+  if (env.FERRY_WATCH_EMAIL_FROM) next.email.from = env.FERRY_WATCH_EMAIL_FROM;
+  if (env.FERRY_WATCH_STATE_PATH) next.statePath = env.FERRY_WATCH_STATE_PATH;
+
+  if (next.email.delivery.transport === "smtp") {
+    const delivery = next.email.delivery;
+    if (env.FERRY_WATCH_SMTP_HOST) delivery.host = env.FERRY_WATCH_SMTP_HOST;
+    if (env.FERRY_WATCH_SMTP_USER) delivery.user = env.FERRY_WATCH_SMTP_USER;
+    const port = Number(env.FERRY_WATCH_SMTP_PORT);
+    if (Number.isInteger(port) && port > 0 && port <= 65535) delivery.port = port;
+  }
+
+  const result = ConfigSchema.safeParse(next);
+  if (!result.success) {
+    const issues = [...new Set(result.error.issues.map((issue) => issue.message))]
+      .map((message) => `  - ${message}`)
+      .join("\n");
+    throw new Error(`Environment overrides produced an invalid config:\n${issues}`);
+  }
+  return result.data;
+}

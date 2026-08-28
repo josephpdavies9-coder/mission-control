@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyDateOverride, ConfigSchema, loadConfig } from "../src/config.js";
+import {
+  applyDateOverride,
+  applyEnvOverrides,
+  ConfigSchema,
+  loadConfig,
+} from "../src/config.js";
 
 const base = {
   email: { from: "a@b.test", to: ["c@d.test"], delivery: { transport: "console" } },
@@ -157,5 +162,73 @@ describe("applyDateOverride", () => {
     expect(() => applyDateOverride(config, "25/09/2026", null)).toThrow(
       /invalid date window/,
     );
+  });
+});
+
+describe("applyEnvOverrides", () => {
+  const smtpBase = {
+    ...base,
+    email: {
+      ...base.email,
+      delivery: {
+        transport: "smtp",
+        host: "smtp.example.com",
+        user: "me@example.com",
+        passwordEnv: "FERRY_WATCH_SMTP_PASSWORD",
+      },
+    },
+  };
+
+  it("leaves the config alone when nothing is set", () => {
+    const config = ConfigSchema.parse(base);
+    expect(applyEnvOverrides(config, {})).toEqual(config);
+  });
+
+  it("overrides recipients from a comma-separated list", () => {
+    const config = ConfigSchema.parse(base);
+    const overridden = applyEnvOverrides(config, {
+      FERRY_WATCH_EMAIL_TO: "a@x.test, b@x.test",
+    });
+    expect(overridden.email.to).toEqual(["a@x.test", "b@x.test"]);
+  });
+
+  it("overrides SMTP host, user and port", () => {
+    const config = ConfigSchema.parse(smtpBase);
+    const overridden = applyEnvOverrides(config, {
+      FERRY_WATCH_SMTP_HOST: "smtp.gmail.com",
+      FERRY_WATCH_SMTP_USER: "joe@gmail.com",
+      FERRY_WATCH_SMTP_PORT: "465",
+    });
+    expect(overridden.email.delivery).toMatchObject({
+      host: "smtp.gmail.com",
+      user: "joe@gmail.com",
+      port: 465,
+    });
+  });
+
+  it("ignores a nonsense port rather than failing the run", () => {
+    const config = ConfigSchema.parse(smtpBase);
+    const overridden = applyEnvOverrides(config, { FERRY_WATCH_SMTP_PORT: "abc" });
+    expect(overridden.email.delivery).toMatchObject({ port: 587 });
+  });
+
+  it("overrides the state path", () => {
+    const config = ConfigSchema.parse(base);
+    expect(
+      applyEnvOverrides(config, { FERRY_WATCH_STATE_PATH: "./ci/state.json" }).statePath,
+    ).toBe("./ci/state.json");
+  });
+
+  it("rejects an invalid override rather than silently sending nowhere", () => {
+    const config = ConfigSchema.parse(base);
+    expect(() =>
+      applyEnvOverrides(config, { FERRY_WATCH_EMAIL_TO: "not-an-address" }),
+    ).toThrow(/invalid config/);
+  });
+
+  it("does not mutate the config it was given", () => {
+    const config = ConfigSchema.parse(base);
+    applyEnvOverrides(config, { FERRY_WATCH_EMAIL_FROM: "new@x.test" });
+    expect(config.email.from).toBe("a@b.test");
   });
 });

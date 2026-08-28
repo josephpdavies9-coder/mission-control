@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { applyDateOverride, loadConfig } from "./config.js";
+import {
+  applyDateOverride,
+  applyEnvOverrides,
+  loadConfig,
+} from "./config.js";
 import { runOnce } from "./run.js";
 import { createMailer } from "./notify/index.js";
 import { renderAlert } from "./notify/template.js";
@@ -99,7 +103,7 @@ async function main(): Promise<number> {
     : (message: string) => process.stdout.write(`${message}\n`);
 
   const config = applyDateOverride(
-    await loadConfig(cli.configPath),
+    applyEnvOverrides(await loadConfig(cli.configPath)),
     cli.from,
     cli.to,
   );
