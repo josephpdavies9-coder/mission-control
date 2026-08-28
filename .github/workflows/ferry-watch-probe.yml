@@ -61,34 +61,53 @@ jobs:
             echo
           done
 
-      # The homepage probe revealed an internal JSON API ("bebop"). Reading it
-      # directly would be far cheaper and more robust than driving pages, so
-      # map out what it exposes.
-      - name: Explore internal API
+      # /crossing is the only endpoint that answered anything but 404 — a 500
+      # means it exists and wants parameters. Find out which.
+      - name: Interrogate the crossing endpoint
         continue-on-error: true
         env:
           UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
           BASE: "https://www.brittany-ferries.co.uk/api/bebop/v1"
         run: |
-          echo "=== route catalogue (full) ==="
-          curl -sS -m 30 -H "User-Agent: $UA" -H 'Accept: application/json' \
-            "$BASE/route" | head -c 20000
+          show() {
+            printf '\n--- %s\n' "$1"
+            code=$(curl -sS -o /tmp/o -w '%{http_code}' -m 25 \
+              -H "User-Agent: $UA" -H 'Accept: application/json' "$1" || echo 000)
+            echo "status: $code"
+            head -c 900 /tmp/o
+            echo
+          }
+
+          echo "=== bare call, to see what it complains about ==="
+          show "$BASE/crossing"
+
           echo
+          echo "=== parameter-name guesses (Portsmouth -> Santander, 2026-09-25) ==="
+          show "$BASE/crossing?departurePort=GBPME&arrivalPort=ESSDR&departureDate=2026-09-25"
+          show "$BASE/crossing?departurePortCode=GBPME&arrivalPortCode=ESSDR&departureDate=2026-09-25"
+          show "$BASE/crossing?departure=GBPME&arrival=ESSDR&date=2026-09-25"
+          show "$BASE/crossing?from=GBPME&to=ESSDR&date=2026-09-25"
+          show "$BASE/crossing?origin=GBPME&destination=ESSDR&departureDate=2026-09-25"
+          show "$BASE/crossing?departurePort=GBPME&arrivalPort=ESSDR&outboundDate=2026-09-25"
+
           echo
-          echo "=== endpoint discovery ==="
-          for ep in routes port ports schedule schedules timetable sailing sailings \
-                    crossing crossings availability available accommodation \
-                    accommodations cabin cabins price prices fare fares search quote; do
-            code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -m 20 \
+          echo "=== sibling endpoints under the same base ==="
+          for ep in crossing/search crossings/search crossing/availability \
+                    offer offers booking basket journey journeys trip; do
+            code=$(curl -sS -o /tmp/o -w '%{http_code}' -m 20 \
               -H "User-Agent: $UA" -H 'Accept: application/json' "$BASE/$ep" || echo 000)
-            size=$(wc -c < /tmp/out.json 2>/dev/null || echo 0)
-            printf '%-16s %s  %s bytes\n' "$ep" "$code" "$size"
-            if [ "$code" = "200" ] && [ "$size" -gt 2 ]; then
-              echo "    --- first 600 bytes ---"
-              head -c 600 /tmp/out.json | sed 's/^/    /'
-              echo
-            fi
+            printf '%-24s %s\n' "$ep" "$code"
+            if [ "$code" != "404" ]; then head -c 400 /tmp/o | sed 's/^/    /'; echo; fi
           done
+
+          echo
+          echo "=== does it want a POST? ==="
+          curl -sS -o /tmp/o -w 'POST status: %{http_code}\n' -m 25 -X POST \
+            -H "User-Agent: $UA" -H 'Content-Type: application/json' \
+            -d '{"departurePort":"GBPME","arrivalPort":"ESSDR","departureDate":"2026-09-25"}' \
+            "$BASE/crossing" || true
+          head -c 900 /tmp/o
+          echo
 
       - name: Prepare config
         run: cp ferry-watch.config.example.json ferry-watch.config.json
