@@ -17,6 +17,8 @@ import {
 } from "./providers/brittany-ferries/calibrate.js";
 
 const DEFAULT_HOME = "https://www.brittany-ferries.co.uk/";
+/** The search form lives here, so recording should start here. */
+const DEFAULT_BOOKING = "https://www.brittany-ferries.co.uk/booking";
 
 const USAGE = `ferry-watch — pet-friendly ferry cabin alerts by email
 
@@ -154,7 +156,7 @@ async function main(): Promise<number> {
           config,
           watch,
           "./calibration",
-          cli.startUrl ?? defaultStartUrl(config),
+          cli.startUrl ?? DEFAULT_BOOKING,
         );
         return 0;
       }

@@ -286,6 +286,8 @@ export async function recordCalibration(
   console.log(`  2. Say you are travelling with ${watch.pets} pet(s) and ${watch.passengers} passenger(s)`);
   console.log("  3. Go as far as the page that lists sailings and cabin options");
   console.log("  4. Come back here and press Enter\n");
+  console.log("The whole flow is recorded, so go as deep as the pet cabin options");
+  console.log("actually being listed — that is the call we need to see.\n");
 
   const session = await launchBrowser({
     // Recording is inherently manual, so the window must be visible.
