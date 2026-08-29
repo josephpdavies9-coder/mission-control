@@ -533,37 +533,71 @@ export async function launchBrowser(
         }
       };
 
-      /** Opens a dropdown and clicks the option containing every needle. */
+      /**
+       * Opens a dropdown found by its form-field label, and clicks the option
+       * containing every needle.
+       *
+       * Selection is by label rather than by mat-select id because choosing
+       * "One way" re-renders the form and renumbers every id — an ordinal
+       * selector silently points at the wrong control after that, whereas the
+       * label keeps meaning the same thing.
+       */
       const pickOption = async (
-        selectId: string,
+        labelPattern: string,
         needles: string[],
         label: string,
       ): Promise<boolean> => {
         await closeOverlay();
-        await page.click(`#${selectId}`, { timeout: 8000 }).catch(() => undefined);
-        await new Promise((r) => setTimeout(r, 900));
+
+        const opened = await page
+          .evaluate<string>(
+            `(function(){
+              var sels = Array.from(document.querySelectorAll('mat-select'));
+              var hit = sels.filter(function(s){
+                var f = s.closest('mat-form-field');
+                return f && /${labelPattern}/i.test(f.textContent||'');
+              })[0];
+              if (!hit) return 'no-select-matching-label|' + sels.map(function(s){
+                var f = s.closest('mat-form-field');
+                return f ? (f.textContent||'').trim().slice(0,28) : '?';
+              }).join(' ; ');
+              hit.scrollIntoView({block:'center'});
+              hit.click();
+              return 'opened|' + (hit.id||'(no id)');
+            })()`,
+          )
+          .catch((e) => `error|${e}`);
+
+        if (!opened.startsWith("opened")) {
+          note(label, false, opened);
+          return false;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
 
         // The arrow icon is a text ligature inside the option, so strip it
         // before matching or "Portsmouth -> Santander" never matches.
-        const script = `(function(){
-          var opts = Array.from(document.querySelectorAll('.cdk-overlay-container mat-option'));
-          if (opts.length === 0) return 'no-options';
-          var needles = ${JSON.stringify(needles.map((n) => n.toLowerCase()))};
-          var hit = opts.filter(function(o){
-            var t = (o.textContent||'').toLowerCase().replace(/arrow_right_alt/g,' ');
-            return needles.every(function(n){ return t.indexOf(n) !== -1; });
-          })[0];
-          if (!hit) return 'not-found|' + opts.length + '|' + opts.slice(0,6).map(function(o){
-            return (o.textContent||'').trim().slice(0,40);
-          }).join(' ; ');
-          hit.click();
-          return 'clicked|' + (hit.textContent||'').trim().slice(0,60);
-        })()`;
+        const result = await page
+          .evaluate<string>(
+            `(function(){
+              var opts = Array.from(document.querySelectorAll('.cdk-overlay-container mat-option'));
+              if (opts.length === 0) return 'no-options';
+              var needles = ${JSON.stringify(needles.map((n) => n.toLowerCase()))};
+              var hit = opts.filter(function(o){
+                var t = (o.textContent||'').toLowerCase().replace(/arrow_right_alt/g,' ');
+                return needles.every(function(n){ return t.indexOf(n) !== -1; });
+              })[0];
+              if (!hit) return 'not-found|of ' + opts.length + '|' + opts.slice(0,8).map(function(o){
+                return (o.textContent||'').trim().slice(0,32);
+              }).join(' ; ');
+              hit.click();
+              return 'clicked|' + (hit.textContent||'').trim().slice(0,60);
+            })()`,
+          )
+          .catch((e) => `error|${e}`);
 
-        const result = await page.evaluate<string>(script).catch((e) => `error|${e}`);
-        await new Promise((r) => setTimeout(r, 700));
+        await new Promise((r) => setTimeout(r, 800));
         const ok = result.startsWith("clicked");
-        note(label, ok, result);
+        note(label, ok, `${opened} -> ${result}`);
         await closeOverlay();
         return ok;
       };
@@ -611,7 +645,7 @@ export async function launchBrowser(
       note("one-way", oneWay.startsWith("clicked"), oneWay);
       await new Promise((r) => setTimeout(r, 800));
 
-      await pickOption("mat-select-0", [plan.routeFrom, plan.routeTo], "route");
+      await pickOption("outbound route|route", [plan.routeFrom, plan.routeTo], "route");
 
       // The date format the field accepts is unknown, so try the plausible
       // ones and keep whichever the control actually retains.
@@ -633,9 +667,22 @@ export async function launchBrowser(
           break;
         }
       }
-      note("date", dateSet !== "none", dateSet);
+      if (dateSet === "none") {
+        const inputs = await page
+          .evaluate<string>(
+            `JSON.stringify(Array.from(document.querySelectorAll('input')).filter(function(i){
+              return i.offsetParent !== null;
+            }).map(function(i){
+              return (i.getAttribute('data-testid')||i.id||'?') + ':' + (i.getAttribute('placeholder')||'');
+            }))`,
+          )
+          .catch(() => "[]");
+        note("date", false, `no format accepted; visible inputs: ${inputs}`);
+      } else {
+        note("date", true, dateSet);
+      }
 
-      await pickOption("mat-select-6", ["pet"], "pets");
+      await pickOption("pet", ["pet"], "pets");
 
       const submitted = await page
         .click('[data-testid="submit"]', { timeout: 10000 })
