@@ -305,9 +305,31 @@ export async function launchBrowser(
         waitUntil: "domcontentloaded",
         timeout: options.timeoutMs,
       });
-      if (consentSelector) {
-        await page.click(consentSelector, { timeout: 8000 }).catch(() => undefined);
+
+      // A consent banner that is still up swallows every subsequent click, so
+      // report whether it was actually dismissed rather than assuming.
+      let consent = "not attempted";
+      const consentCandidates = [
+        consentSelector,
+        "#onetrust-accept-btn-handler",
+        "button#onetrust-accept-btn-handler",
+        '[aria-label="Accept all"]',
+        'button:has-text("Accept")',
+      ].filter(Boolean);
+
+      for (const candidate of consentCandidates) {
+        const clicked = await page
+          .click(candidate, { timeout: 5000 })
+          .then(() => true)
+          .catch(() => false);
+        if (clicked) {
+          consent = `clicked ${candidate}`;
+          break;
+        }
+        consent = "no consent button matched";
       }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
       await page
         .waitForLoadState("networkidle", { timeout: options.timeoutMs })
         .catch(() => undefined);
@@ -332,34 +354,68 @@ export async function launchBrowser(
         return [];
       }
 
-      const results: SelectInfo[] = [];
-      for (const select of selects) {
-        if (!select.id) continue;
-        // A mat-select only renders its options once opened, into an overlay
-        // elsewhere in the DOM, so each one has to be clicked in turn.
-        await page.click(`#${select.id}`, { timeout: 8000 }).catch(() => undefined);
-        await new Promise((resolve) => setTimeout(resolve, 700));
-
-        const optionsJson = await page.evaluate<string>(`
+      const readOptions = async (): Promise<string[]> => {
+        const json = await page.evaluate<string>(`
           JSON.stringify(
-            Array.from(document.querySelectorAll('.cdk-overlay-container mat-option'))
+            Array.from(document.querySelectorAll('.cdk-overlay-container mat-option, .cdk-overlay-container [role="option"]'))
               .map(function (el) { return (el.textContent || '').trim().slice(0, 70); })
           )
         `);
+        try {
+          return JSON.parse(json) as string[];
+        } catch {
+          return [];
+        }
+      };
+
+      const results: SelectInfo[] = [
+        { id: "(consent)", testId: "", label: consent, options: [] },
+      ];
+
+      for (const select of selects) {
+        if (!select.id) continue;
+
+        // Angular Material puts the click target on an inner trigger, and a
+        // real click can still be intercepted, so escalate through three ways
+        // of opening the same dropdown and report which one worked.
+        const attempts: [string, () => Promise<unknown>][] = [
+          ["host", () => page.click(`#${select.id}`, { timeout: 6000 })],
+          [
+            "trigger",
+            () =>
+              page.click(`#${select.id} .mat-mdc-select-trigger`, { timeout: 6000 }),
+          ],
+          [
+            "dispatch",
+            () =>
+              page.evaluate<string>(
+                `(function(){var e=document.querySelector('#${select.id}');if(!e)return 'missing';e.scrollIntoView();e.click();return 'ok';})()`,
+              ),
+          ],
+        ];
 
         let optionTexts: string[] = [];
-        try {
-          optionTexts = JSON.parse(optionsJson);
-        } catch {
-          optionTexts = [];
+        let how = "none";
+        for (const [name, run] of attempts) {
+          await run().catch(() => undefined);
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          optionTexts = await readOptions();
+          if (optionTexts.length > 0) {
+            how = name;
+            break;
+          }
         }
-        results.push({ ...select, options: optionTexts });
 
-        // Close the overlay before opening the next one.
+        results.push({
+          ...select,
+          label: `${select.label}  [opened via: ${how}]`,
+          options: optionTexts,
+        });
+
         await page
           .click(".cdk-overlay-backdrop", { timeout: 3000 })
           .catch(() => undefined);
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
 
       return results;
