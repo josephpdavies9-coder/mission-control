@@ -170,6 +170,95 @@ async function importPlaywright(): Promise<{
   }
 }
 
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/**
+ * Picks a date through a Material datepicker's calendar.
+ *
+ * Needed because the input is often readonly, so no amount of typing will set
+ * it. Opens the calendar, steps forward month by month until the header
+ * matches the target, then clicks the day cell.
+ */
+async function pickFromCalendar(
+  page: PlaywrightPage,
+  testId: string,
+  isoDate: string,
+): Promise<string> {
+  const [year, month, day] = isoDate.split("-");
+  const wanted = `${MONTHS[Number(month) - 1]} ${year}`;
+  const dayNumber = String(Number(day));
+
+  const opened = await page
+    .evaluate<string>(
+      `(function(){
+        var input = document.querySelector('[data-testid=${JSON.stringify(testId)}]');
+        if (!input) return 'no-input';
+        var field = input.closest('mat-form-field') || input.parentElement;
+        var toggle = field && field.querySelector('mat-datepicker-toggle button, button[aria-label*="calendar" i]');
+        if (!toggle) return 'no-toggle';
+        toggle.setAttribute('data-fw-cal','1');
+        return 'ok';
+      })()`,
+    )
+    .catch((error) => `error:${String(error).slice(0, 80)}`);
+  if (opened !== "ok") return `toggle:${opened}`;
+
+  await page.click('[data-fw-cal="1"]', { timeout: 8000 }).catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 900));
+
+  // Step forward a bounded number of months rather than looping forever.
+  for (let hop = 0; hop < 18; hop += 1) {
+    const label = await page
+      .evaluate<string>(
+        `(function(){
+          var b = document.querySelector('.mat-calendar-period-button, [class*="period-button"]');
+          return b ? (b.textContent||'').trim() : '';
+        })()`,
+      )
+      .catch(() => "");
+    if (!label) return "no-calendar";
+    if (label.toUpperCase().includes(wanted.toUpperCase())) break;
+
+    const advanced = await page
+      .evaluate<string>(
+        `(function(){
+          var n = document.querySelector('.mat-calendar-next-button, button[aria-label*="Next month" i]');
+          if (!n || n.disabled) return 'no-next';
+          n.setAttribute('data-fw-next','1');
+          return 'ok';
+        })()`,
+      )
+      .catch(() => "err");
+    if (advanced !== "ok") return `next:${advanced} at ${label}`;
+    await page.click('[data-fw-next="1"]', { timeout: 5000 }).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  const clicked = await page
+    .evaluate<string>(
+      `(function(){
+        var cells = Array.from(document.querySelectorAll('.mat-calendar-body-cell, [role="gridcell"]'));
+        var hit = cells.filter(function(c){
+          return (c.textContent||'').trim() === ${JSON.stringify(dayNumber)} &&
+                 !c.classList.contains('mat-calendar-body-disabled');
+        })[0];
+        if (!hit) return 'day-not-found|of ' + cells.length;
+        hit.setAttribute('data-fw-day','1');
+        return 'ok';
+      })()`,
+    )
+    .catch((error) => `error:${String(error).slice(0, 80)}`);
+  if (clicked !== "ok") return clicked;
+
+  await page.click('[data-fw-day="1"]', { timeout: 5000 }).catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 700));
+  return `picked ${wanted} ${dayNumber}`;
+}
+
 export async function launchBrowser(
   options: BrowserOptions,
 ): Promise<BrowserSession> {
@@ -567,7 +656,11 @@ export async function launchBrowser(
                 return f ? (f.textContent||'').trim().slice(0,28) : '?';
               }).join(' ; ');
               hit.scrollIntoView({block:'center'});
-              return 'id|' + (hit.id||'');
+              // Ids are regenerated as the form re-renders, so a lookup here
+              // and a click a moment later can disagree. Tag the element and
+              // click the tag, which cannot churn.
+              hit.setAttribute('data-fw', ${JSON.stringify(labelPattern.slice(0, 12))});
+              return 'id|' + (hit.id||'tagged');
             })()`,
           )
           .catch((e) => `error|${e}`);
@@ -577,11 +670,12 @@ export async function launchBrowser(
           return false;
         }
         const selectId = found.slice(3);
+        const target = `[data-fw=${JSON.stringify(labelPattern.slice(0, 12))}]`;
 
         let clickNote = "";
         const tryClick = async (opts: { timeout: number; force?: boolean }) => {
           try {
-            await page.click(`#${selectId}`, opts);
+            await page.click(target, opts);
             return "ok";
           } catch (error) {
             return `threw:${String(error).slice(0, 120)}`;
@@ -673,12 +767,26 @@ export async function launchBrowser(
       // ones and keep whichever the control actually retains.
       const [y, m, d] = plan.date.split("-");
       const formats = [`${d}/${m}/${y}`, plan.date, `${d}-${m}-${y}`, `${d}.${m}.${y}`];
+      const readonly = await page
+        .evaluate<string>(
+          `(function(){
+            var e = document.querySelector('[data-testid="outwardDate"]');
+            if (!e) return 'missing';
+            return 'readonly=' + e.hasAttribute('readonly') + ' disabled=' + e.disabled;
+          })()`,
+        )
+        .catch(() => "unknown");
+      note("date-field", true, readonly);
+
       let dateSet = "none";
+      let fillError = "";
       for (const value of formats) {
         await page.click('[data-testid="outwardDate"]', { timeout: 6000 }).catch(() => undefined);
-        await page
-          .fill('[data-testid="outwardDate"]', value, { timeout: 6000 })
-          .catch(() => undefined);
+        try {
+          await page.fill('[data-testid="outwardDate"]', value, { timeout: 6000 });
+        } catch (error) {
+          fillError = String(error).slice(0, 140);
+        }
         // A Material datepicker keeps the typed text only once it is committed,
         // so blur the field before reading the value back.
         await page
@@ -695,6 +803,19 @@ export async function launchBrowser(
           break;
         }
       }
+      // A readonly Material datepicker cannot be typed into at all — the only
+      // way in is the calendar it insists you use.
+      if (dateSet === "none") {
+        const picked = await pickFromCalendar(page, "outwardDate", plan.date);
+        note("date-calendar", picked.startsWith("picked"), picked);
+        const got = await page
+          .evaluate<string>(
+            `(document.querySelector('[data-testid="outwardDate"]')||{}).value || ''`,
+          )
+          .catch(() => "");
+        if (got.trim().length > 0) dateSet = `calendar -> "${got}"`;
+      }
+
       if (dateSet === "none") {
         const inputs = await page
           .evaluate<string>(
@@ -705,7 +826,11 @@ export async function launchBrowser(
             }))`,
           )
           .catch(() => "[]");
-        note("date", false, `no format accepted; visible inputs: ${inputs}`);
+        note(
+          "date",
+          false,
+          `no format accepted (${readonly}); fill error: ${fillError || "none"}; inputs: ${inputs}`,
+        );
       } else {
         note("date", true, dateSet);
       }
@@ -734,7 +859,18 @@ export async function launchBrowser(
           break;
         }
       }
-      note("inbound-date", inboundSet !== "none", inboundSet);
+      if (inboundSet === "none") {
+        const iso = inbound.toISOString().slice(0, 10);
+        const picked = await pickFromCalendar(page, "inwardDate", iso);
+        const got = await page
+          .evaluate<string>(
+            `(document.querySelector('[data-testid="inwardDate"]')||{}).value || ''`,
+          )
+          .catch(() => "");
+        if (got.trim().length > 0) inboundSet = `calendar -> "${got}"`;
+        else inboundSet = `none (${picked})`;
+      }
+      note("inbound-date", !inboundSet.startsWith("none"), inboundSet);
 
       await pickOption("pet", ["pet"], "pets");
 
