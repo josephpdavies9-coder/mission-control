@@ -646,12 +646,20 @@ export async function launchBrowser(
         const found = await page
           .evaluate<string>(
             `(function(){
-              var sels = Array.from(document.querySelectorAll('mat-select'));
+              // A return trip renders outbound AND inbound copies of each
+              // control, and the inbound ones are hidden behind "Same for
+              // inbound". querySelectorAll returns both; Playwright will only
+              // click a visible one. Matching the hidden copy is why every
+              // click timed out and every forced click found no options.
+              var sels = Array.from(document.querySelectorAll('mat-select')).filter(function(s){
+                var r = s.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+              });
               var hit = sels.filter(function(s){
                 var f = s.closest('mat-form-field');
                 return f && /${labelPattern}/i.test(f.textContent||'');
               })[0];
-              if (!hit) return 'no-select-matching-label|' + sels.map(function(s){
+              if (!hit) return 'no-visible-select-matching-label|' + sels.map(function(s){
                 var f = s.closest('mat-form-field');
                 return f ? (f.textContent||'').trim().slice(0,28) : '?';
               }).join(' ; ');
@@ -767,6 +775,21 @@ export async function launchBrowser(
       // ones and keep whichever the control actually retains.
       const [y, m, d] = plan.date.split("-");
       const formats = [`${d}/${m}/${y}`, plan.date, `${d}-${m}-${y}`, `${d}.${m}.${y}`];
+      // Same duplication applies to the date inputs.
+      const dateVisible = await page
+        .evaluate<string>(
+          `(function(){
+            var all = Array.from(document.querySelectorAll('[data-testid="outwardDate"]'));
+            var vis = all.filter(function(e){
+              var r = e.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            return all.length + ' total, ' + vis.length + ' visible';
+          })()`,
+        )
+        .catch(() => "unknown");
+      note("date-copies", true, dateVisible);
+
       const readonly = await page
         .evaluate<string>(
           `(function(){
