@@ -1,27 +1,17 @@
-# Diagnostic run against the live Brittany Ferries site.
+# Live verification of the Brittany Ferries JSON API sequence.
 #
-# The point of this workflow is that a GitHub runner can reach the operator's
-# website, which is what makes calibration possible without a laptop. It reports
-# what the booking site returns so the selector pack can be corrected.
+# The provider now talks to the operator's internal "bebop" API directly —
+# POST /crossing/prices to find sailings flagged with a pet cabin, then
+# POST /crossing/accommodations to confirm real stock. No browser involved.
+#
+# This workflow exists because the dev sandbox cannot reach the operator, so
+# the only way to prove the payloads parse is to run it on a GitHub runner.
 name: ferry-watch probe
 
 on:
   workflow_dispatch:
-    inputs:
-      startUrl:
-        description: "URL to probe (blank = the configured search URL)"
-        required: false
-        default: ""
-      wait:
-        description: "Seconds to let the page settle"
-        required: false
-        default: "20"
-  # Also runs whenever this file changes, so the probe can be re-triggered
-  # from a branch without waiting for it to reach the default branch.
   push:
     branches: [claude/custom-dog-boats-email-awyeg5]
-    # Also re-run when the probe code changes, not just the workflow file —
-    # otherwise a code-only fix silently never gets exercised.
     paths:
       - ".github/workflows/ferry-watch-probe.yml"
       - "projects/ferry-watch/src/**"
@@ -49,39 +39,41 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      # Establishes whether the operator serves a runner at all, before any
-      # parsing question is on the table.
-      - name: Reachability
+      # Raw payload first. If the provider parses nothing, this shows whether
+      # the fault is the request, the response shape, or the filter. The body
+      # mirrors exactly what src/providers/brittany-ferries/api.ts sends.
+      # Only step one is curl-able standalone — step two needs a shipName and
+      # ticketTier that only step one can supply, so the provider run covers it.
+      - name: Capture raw /crossing/prices
         continue-on-error: true
         run: |
-          for host in www.brittany-ferries.co.uk www.brittanyferries.com; do
-            echo "=== $host ==="
-            curl -sS -o /dev/null -D - -m 30 "https://$host/" \
-              -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' \
-              | head -20 || echo "request failed"
-            echo
-          done
+          mkdir -p calibration
+          curl -sS -m 60 -o calibration/prices.json -w 'HTTP %{http_code}\n' \
+            'https://www.brittany-ferries.co.uk/api/bebop/v1/crossing/prices' \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json' \
+            -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' \
+            --data-binary '{"bookingReference":null,"pets":{"smallDogs":1,"largeDogs":0,"cats":0},"passengers":{"adults":2,"children":0,"infants":0},"vehicle":{"type":"CAR","registrations":["TBC"],"height":183,"length":500,"extras":{"rearMountedBikeCarrier":null}},"departurePort":"GBPME","arrivalPort":"ESSDR","disability":null,"direction":"outbound","fromDate":"2026-09-25","toDate":"2026-10-01"}'
+          echo "--- first 4000 bytes ---"
+          head -c 4000 calibration/prices.json; echo
 
       - name: Prepare config
         run: cp ferry-watch.config.example.json ferry-watch.config.json
 
-      # Driving the booking form blind is what wasted time before. List the
-      # real controls first, then automate against them.
-      # Drive a real search: /crossing refuses a bare call, so the search has
-      # to actually happen for the site to make the call we need to see.
-      - name: Drive a booking search
-        continue-on-error: true
-        run: pnpm exec tsx src/cli.ts search 2>&1 | head -120
-
+      # The real thing: the provider's own two-step sequence across all three
+      # UK-to-Spain crossings. --dry-run means no email is attempted.
+      - name: Run a live check
+        run: |
+          # Without pipefail the pipe hides a total failure behind head's exit 0,
+          # so a sweep where every route errored would report green.
+          set -o pipefail
+          pnpm exec tsx src/cli.ts check --dry-run 2>&1 | head -200
 
       - name: Upload captured payloads
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ferry-watch-calibration
+          name: ferry-watch-api-payloads
           path: projects/ferry-watch/calibration/
           if-no-files-found: warn
           retention-days: 14

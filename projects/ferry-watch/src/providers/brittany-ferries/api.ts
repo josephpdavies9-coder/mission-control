@@ -1,0 +1,274 @@
+import type { Watch } from "../../config.js";
+import type { PetOption, Sailing } from "../../types.js";
+import { toPortCode } from "./ports.js";
+
+/**
+ * Reads availability from Brittany Ferries' internal JSON API.
+ *
+ * These endpoints need no cookies, no session and no browser — the earlier
+ * conclusion that they did was wrong. A bare POST to /crossing returns 405,
+ * which is true of that path but says nothing about its children: the real
+ * endpoints are /crossing/prices and /crossing/accommodations, and both are
+ * POST. Sequence discovered by Codex.
+ */
+
+const BASE = "https://www.brittany-ferries.co.uk/api/bebop/v1";
+
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/** Pets split by the categories the operator prices separately. */
+export interface PetParty {
+  smallDogs: number;
+  largeDogs: number;
+  cats: number;
+}
+
+interface Vehicle {
+  type: string;
+  registrations: string[];
+  height: number;
+  length: number;
+  extras: { rearMountedBikeCarrier: null };
+}
+
+function vehicleFor(watch: Watch): Vehicle {
+  return {
+    type: (watch.vehicle ?? "CAR").toUpperCase(),
+    registrations: ["TBC"],
+    height: 183,
+    length: 500,
+    extras: { rearMountedBikeCarrier: null },
+  };
+}
+
+function petsFor(watch: Watch): PetParty {
+  return { smallDogs: watch.pets, largeDogs: 0, cats: 0 };
+}
+
+async function postJson(
+  path: string,
+  body: unknown,
+  attempt = 0,
+): Promise<unknown> {
+  const response = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/plain, */*",
+      "accept-language": "en-GB",
+      "user-agent": UA,
+    },
+    body: JSON.stringify(body),
+  });
+
+  // Rate limiting and transient server errors are worth one backed-off retry;
+  // anything else is a real answer and should surface.
+  if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+    await new Promise((r) => setTimeout(r, 2 ** attempt * 1500));
+    return postJson(path, body, attempt + 1);
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`${path} returned ${response.status}: ${detail.slice(0, 200)}`);
+  }
+  return response.json();
+}
+
+/** Inclusive `YYYY-MM-DD` range split into windows of at most `days`. */
+export function dateWindows(
+  from: string,
+  to: string,
+  days = 7,
+): { fromDate: string; toDate: string }[] {
+  const windows: { fromDate: string; toDate: string }[] = [];
+  let cursor = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(cursor) || Number.isNaN(end)) return windows;
+
+  while (cursor <= end && windows.length < 20) {
+    const stop = Math.min(cursor + (days - 1) * 86_400_000, end);
+    windows.push({
+      fromDate: `${new Date(cursor).toISOString().slice(0, 10)}T00:00:00`,
+      toDate: `${new Date(stop).toISOString().slice(0, 10)}T23:59:59`,
+    });
+    cursor = stop + 86_400_000;
+  }
+  return windows;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Walks a payload for objects that look like sailings with pet availability. */
+export function extractCandidates(payload: unknown): Record<string, unknown>[] {
+  const found: Record<string, unknown>[] = [];
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 12) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    const record = asRecord(node);
+    if (!record) return;
+    if ("petAvailabilities" in record || "petAvailability" in record) {
+      found.push(record);
+    }
+    for (const value of Object.values(record)) walk(value, depth + 1);
+  };
+  walk(payload, 0);
+  return found;
+}
+
+/** True when the sailing advertises a pet cabin as available. */
+export function petCabinAvailable(sailing: Record<string, unknown>): boolean {
+  const raw = sailing.petAvailabilities ?? sailing.petAvailability;
+  const record = asRecord(raw);
+  if (record) return record.petCabinAvailable === true;
+  if (Array.isArray(raw)) {
+    return raw.some((entry) => asRecord(entry)?.petCabinAvailable === true);
+  }
+  return false;
+}
+
+const PET_CABIN = /pet\s*friendly\s*cabin/i;
+
+/** Keeps only accommodations that are pet cabins with stock. */
+export function petCabinsFrom(payload: unknown): PetOption[] {
+  const options: PetOption[] = [];
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 12) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    const record = asRecord(node);
+    if (!record) return;
+
+    const description = String(record.description ?? record.name ?? "");
+    const quantity = Number(record.quantityAvailable ?? record.quantity ?? 0);
+    if (PET_CABIN.test(description) && quantity > 0) {
+      const price = Number(record.price ?? record.totalPrice ?? NaN);
+      options.push({
+        code: String(record.code ?? record.accommodationCode ?? description),
+        label: description,
+        kind: "pet-friendly-cabin",
+        available: true,
+        remaining: Math.trunc(quantity),
+        price: Number.isFinite(price) ? Math.round(price * 100) : null,
+        currency: typeof record.currency === "string" ? record.currency : "GBP",
+      });
+    }
+    for (const value of Object.values(record)) walk(value, depth + 1);
+  };
+  walk(payload, 0);
+  return options;
+}
+
+export async function fetchPrices(
+  watch: Watch,
+  window: { fromDate: string; toDate: string },
+): Promise<unknown> {
+  return postJson("/crossing/prices", {
+    bookingReference: null,
+    pets: petsFor(watch),
+    passengers: { adults: watch.passengers, children: 0, infants: 0 },
+    vehicle: vehicleFor(watch),
+    departurePort: toPortCode(watch.routeFrom),
+    arrivalPort: toPortCode(watch.routeTo),
+    disability: null,
+    direction: "outbound",
+    fromDate: window.fromDate,
+    toDate: window.toDate,
+  });
+}
+
+export async function fetchAccommodations(
+  watch: Watch,
+  departureDate: string,
+  shipName: string,
+  ticketTier: string,
+): Promise<unknown> {
+  return postJson("/crossing/accommodations", {
+    bookingReference: null,
+    departurePort: toPortCode(watch.routeFrom),
+    arrivalPort: toPortCode(watch.routeTo),
+    departureDate,
+    passengers: { adults: watch.passengers, children: 0, infants: 0 },
+    vehicle: vehicleFor(watch),
+    disability: null,
+    petCabinsNeeded: true,
+    ticketTier,
+    pets: petsFor(watch),
+    shipName,
+    direction: "outbound",
+  });
+}
+
+/** Reads a string field from a sailing under any of several likely names. */
+function pick(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value) return value;
+  }
+  return "";
+}
+
+/**
+ * Two-step read: prices lists sailings with a preliminary pet-cabin flag, then
+ * accommodations gives cabin-level stock for the ones worth asking about.
+ */
+export async function readAvailability(
+  watch: Watch,
+  log: (message: string) => void,
+): Promise<Sailing[]> {
+  const sailings: Sailing[] = [];
+
+  for (const window of dateWindows(watch.dateFrom, watch.dateTo)) {
+    log(`  prices ${window.fromDate.slice(0, 10)} to ${window.toDate.slice(0, 10)}`);
+    const prices = await fetchPrices(watch, window);
+
+    for (const candidate of extractCandidates(prices)) {
+      if (!petCabinAvailable(candidate)) continue;
+
+      const departureDate = pick(candidate, [
+        "departureDate",
+        "departureDateTime",
+        "departure",
+      ]);
+      const shipName = pick(candidate, ["shipName", "ship", "vessel"]);
+      const tier = pick(candidate, ["ticketTier", "tier", "fareTier"]) || "STANDARD";
+      if (!departureDate || !shipName) continue;
+
+      const accommodations = await fetchAccommodations(
+        watch,
+        departureDate,
+        shipName,
+        tier,
+      );
+      const petOptions = petCabinsFrom(accommodations);
+      if (petOptions.length === 0) continue;
+
+      sailings.push({
+        id: pick(candidate, ["id", "crossingId", "sailingId"]) || `${shipName}-${departureDate}`,
+        routeFrom: watch.routeFrom,
+        routeTo: watch.routeTo,
+        departAt: departureDate.replace("Z", "").slice(0, 19),
+        arriveAt: null,
+        shipName,
+        petOptions,
+        bookingUrl: "https://www.brittany-ferries.co.uk/booking",
+      });
+
+      // Considerate pacing between accommodation lookups.
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+
+  return sailings;
+}
