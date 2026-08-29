@@ -75,27 +75,10 @@ jobs:
             echo "=== $url"
             curl -sS -m 30 -L -H "User-Agent: $UA" "$url" -o /tmp/p.html \
               -w 'status: %{http_code}  size: %{size_download}\n' || continue
-            # Drop style/script blocks before stripping tags, so prose survives.
-            python3 - <<'PY2'
-import re, pathlib
-html = pathlib.Path("/tmp/p.html").read_text(errors="replace")
-html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
-text = re.sub(r"(?s)<[^>]+>", " ", html)
-text = re.sub(r"[ \t]+", " ", text)
-lines = [l.strip() for l in text.splitlines()]
-out, blank = [], 0
-for l in lines:
-    if not l:
-        blank += 1
-        continue
-    if blank:
-        out.append("")
-    blank = 0
-    out.append(l)
-print("\n".join(out)[:6000])
-PY2
+            python3 scripts/strip-html.py /tmp/p.html
             echo
           done
+
       - name: Prepare config
         run: cp ferry-watch.config.example.json ferry-watch.config.json
 
