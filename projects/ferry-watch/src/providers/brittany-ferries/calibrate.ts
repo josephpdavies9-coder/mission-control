@@ -146,6 +146,7 @@ async function analyseRecording(
   // The app's own call is what a bare curl cannot reproduce, so show it in
   // full: URL, method and headers.
   for (const request of result.requests) {
+    if (/sentry\.io|onetrust|trustpilot|contentful|veritonic/i.test(request.url)) continue;
     console.log(`REQ  ${request.method} ${request.url}`);
     for (const [key, value] of Object.entries(request.headers)) {
       if (!/^(host|accept|content-type|authorization|x-|cookie|referer|origin)/i.test(key)) {
@@ -170,8 +171,13 @@ async function analyseRecording(
   const dir = resolve(outputDir);
   await mkdir(dir, { recursive: true });
 
+  const NOISE = /sentry\.io|onetrust|trustpilot|contentful|veritonic|googletagmanager|doubleclick/i;
+
   const hits: string[] = [];
   for (const [index, response] of result.captured.entries()) {
+    // Third-party analytics and CMS traffic is never availability, and it
+    // buries the operator's own calls in the log.
+    if (NOISE.test(response.url)) continue;
     const sailings = extractSailings(response.body, {
       routeFrom: watch.routeFrom,
       routeTo: watch.routeTo,

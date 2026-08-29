@@ -706,6 +706,15 @@ export async function launchBrowser(
       await Promise.all(pending);
       const title = await page.title().catch(() => "");
 
+      // What the page actually shows at the end explains a dead end far
+      // faster than the absence of a network call does.
+      const visible = await page
+        .evaluate<string>(
+          `(document.body ? document.body.innerText : '').replace(/\\s+/g,' ').slice(0, 1200)`,
+        )
+        .catch(() => "");
+      note("page-text", visible.length > 0, visible || "(no text)");
+
       return { steps, captured, requests, finalUrl: page.url(), title };
     },
 

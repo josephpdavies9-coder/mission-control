@@ -77,22 +77,6 @@ jobs:
         run: pnpm exec tsx src/cli.ts search 2>&1 | head -120
 
 
-      - name: Probe
-        continue-on-error: true
-        # Inputs go through the environment rather than being interpolated into
-        # the script, so they cannot inject shell.
-        env:
-          START_URL: ${{ github.event.inputs.startUrl }}
-          WAIT: ${{ github.event.inputs.wait || '20' }}
-        run: |
-          if [ -n "$START_URL" ]; then
-            pnpm exec tsx src/cli.ts probe --wait "$WAIT" --start-url "$START_URL"
-          else
-            pnpm exec tsx src/cli.ts probe --wait "$WAIT"
-          fi
-
-      # The captured payloads are the raw material for fixing the parser, so
-      # keep them even when the probe itself reported nothing useful.
       - name: Upload captured payloads
         if: always()
         uses: actions/upload-artifact@v4
