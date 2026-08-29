@@ -106,6 +106,7 @@ interface PlaywrightPage {
   content(): Promise<string>;
   url(): string;
   title(): Promise<string>;
+  keyboard: { press(key: string): Promise<void> };
 }
 
 interface PlaywrightContext {
@@ -368,12 +369,50 @@ export async function launchBrowser(
         }
       };
 
+      const countOptions = async (): Promise<number> => {
+        const raw = await page.evaluate<string>(
+          `String(document.querySelectorAll('.cdk-overlay-container mat-option, .cdk-overlay-container [role="option"]').length)`,
+        );
+        return Number(raw) || 0;
+      };
+
+      /**
+       * Closes any open dropdown and waits for its options to actually leave
+       * the DOM. Without this the next dropdown reads the previous one's
+       * options — every select then looks identical, which is exactly the
+       * false result this replaces.
+       */
+      const closeOverlay = async (): Promise<boolean> => {
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          if ((await countOptions()) === 0) return true;
+          await page.keyboard.press("Escape").catch(() => undefined);
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          if ((await countOptions()) === 0) return true;
+          await page
+            .click(".cdk-overlay-backdrop", { timeout: 2000 })
+            .catch(() => undefined);
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+        return (await countOptions()) === 0;
+      };
+
       const results: SelectInfo[] = [
         { id: "(consent)", testId: "", label: consent, options: [] },
       ];
 
       for (const select of selects) {
         if (!select.id) continue;
+
+        // Refuse to report anything unless we start from a clean overlay,
+        // otherwise the result is the previous dropdown's options.
+        if (!(await closeOverlay())) {
+          results.push({
+            ...select,
+            label: `${select.label}  [SKIPPED: previous overlay would not close]`,
+            options: [],
+          });
+          continue;
+        }
 
         // Angular Material puts the click target on an inner trigger, and a
         // real click can still be intercepted, so escalate through three ways
@@ -412,10 +451,7 @@ export async function launchBrowser(
           options: optionTexts,
         });
 
-        await page
-          .click(".cdk-overlay-backdrop", { timeout: 3000 })
-          .catch(() => undefined);
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        await closeOverlay();
       }
 
       return results;
