@@ -135,6 +135,7 @@ interface PlaywrightPage {
   waitForSelector(selector: string, options: { timeout: number }): Promise<unknown>;
   click(selector: string, options: { timeout: number }): Promise<void>;
   fill(selector: string, value: string, options: { timeout: number }): Promise<void>;
+  press(selector: string, key: string, options: { timeout: number }): Promise<void>;
   content(): Promise<string>;
   url(): string;
   title(): Promise<string>;
@@ -549,7 +550,11 @@ export async function launchBrowser(
       ): Promise<boolean> => {
         await closeOverlay();
 
-        const opened = await page
+        // Resolve which select this is by its label, but do not click it from
+        // inside the page: a synthetic click opens the panel without Angular
+        // populating its options, which reads as an empty dropdown. Only a
+        // real input event makes the options render.
+        const found = await page
           .evaluate<string>(
             `(function(){
               var sels = Array.from(document.querySelectorAll('mat-select'));
@@ -562,17 +567,27 @@ export async function launchBrowser(
                 return f ? (f.textContent||'').trim().slice(0,28) : '?';
               }).join(' ; ');
               hit.scrollIntoView({block:'center'});
-              hit.click();
-              return 'opened|' + (hit.id||'(no id)');
+              return 'id|' + (hit.id||'');
             })()`,
           )
           .catch((e) => `error|${e}`);
 
-        if (!opened.startsWith("opened")) {
-          note(label, false, opened);
+        if (!found.startsWith("id|") || found === "id|") {
+          note(label, false, found);
           return false;
         }
-        await new Promise((r) => setTimeout(r, 1000));
+        const selectId = found.slice(3);
+
+        await page.click(`#${selectId}`, { timeout: 8000 }).catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 1200));
+
+        // A re-render can leave the panel empty for a moment; give it a second
+        // real click before concluding there is nothing there.
+        if ((await countOptions()) === 0) {
+          await page.click(`#${selectId}`, { timeout: 6000 }).catch(() => undefined);
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+        const opened = `opened|${selectId}`;
 
         // The arrow icon is a text ligature inside the option, so strip it
         // before matching or "Portsmouth -> Santander" never matches.
@@ -653,10 +668,16 @@ export async function launchBrowser(
       const formats = [`${d}/${m}/${y}`, plan.date, `${d}-${m}-${y}`, `${d}.${m}.${y}`];
       let dateSet = "none";
       for (const value of formats) {
+        await page.click('[data-testid="outwardDate"]', { timeout: 6000 }).catch(() => undefined);
         await page
           .fill('[data-testid="outwardDate"]', value, { timeout: 6000 })
           .catch(() => undefined);
-        await new Promise((r) => setTimeout(r, 500));
+        // A Material datepicker keeps the typed text only once it is committed,
+        // so blur the field before reading the value back.
+        await page
+          .press('[data-testid="outwardDate"]', "Tab", { timeout: 4000 })
+          .catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 700));
         const got = await page
           .evaluate<string>(
             `(document.querySelector('[data-testid="outwardDate"]')||{}).value || ''`,
