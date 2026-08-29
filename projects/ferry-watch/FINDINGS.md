@@ -114,9 +114,75 @@ booking form headlessly, exactly as `calibrate --record` does with a human.
 email alerts, while keeping the site up. That is the best available evidence of
 what this costs to maintain.
 
+## RESOLVED: the API answers directly, no browser needed
+
+Everything above about needing a browser session is **wrong**, and the mistake
+is worth recording because it was expensive.
+
+`POST /api/bebop/v1/crossing` returns 405 "Method 'POST' is not supported".
+I read that as "this endpoint family is GET-only" and stopped POSTing anywhere
+under `/crossing`. That inference was unfounded: the 405 describes `/crossing`
+itself, not its children. Two of its children take POST and answer freely —
+no cookie, no session, no Cloudflare clearance, no browser:
+
+```
+POST /api/bebop/v1/crossing/prices
+POST /api/bebop/v1/crossing/accommodations
+```
+
+That single wrong generalisation closed the correct branch and sent the work
+through roughly fifteen cycles of Angular Material automation that were never
+needed. A negative result about one path says nothing about paths beneath it.
+
+### The two-step sequence
+
+**Step one — which sailings even have pet cabins.** `/crossing/prices` takes a
+date window and returns the sailings in it, each carrying a
+`petAvailabilities.petCabinAvailable` flag:
+
+```json
+{
+  "bookingReference": null,
+  "pets": { "smallDogs": 1, "largeDogs": 0, "cats": 0 },
+  "passengers": { "adults": 2, "children": 0, "infants": 0 },
+  "vehicle": {
+    "type": "CAR", "registrations": ["TBC"],
+    "height": 183, "length": 500,
+    "extras": { "rearMountedBikeCarrier": null }
+  },
+  "departurePort": "GBPME", "arrivalPort": "ESSDR",
+  "disability": null, "direction": "outbound",
+  "fromDate": "2026-09-25", "toDate": "2026-10-01"
+}
+```
+
+**Step two — whether any are actually left.** For each flagged sailing,
+`/crossing/accommodations` with `petCabinsNeeded: true`, plus the `shipName`
+and `ticketTier` that step one supplied for that sailing. An accommodation
+counts only when its name matches `/pet\s*friendly\s*cabin/i` **and**
+`quantityAvailable > 0`.
+
+The distinction between the two steps is the whole point. The step-one flag
+means the ship *has* pet cabins, not that any remain unsold. Alerting on the
+flag alone would produce a constant stream of false positives — which is
+exactly the failure mode a pet-cabin watcher exists to avoid.
+
+### Practical limits
+
+Date windows are requested seven days at a time and paced 800ms apart, with
+exponential backoff on 429 and 5xx. Port codes come from the public `/route`
+catalogue (see above) and are unchanged.
+
+### Credit
+
+The two endpoint names came from a parallel attempt at the same problem by
+Codex, working from the same brief. It POSTed to the sub-paths that I had
+written off.
+
 ## A note on etiquette
 
-This reads an undocumented internal API and drives a public booking site.
+This reads an undocumented internal API. It is not a documented, supported
+interface and carries no promise of stability.
 Keep the polling interval at an hour or more, keep date windows narrow, and
 expect it to break when they redeploy. dog.boats did the same thing and
 stopped offering alerts; that may well be why.

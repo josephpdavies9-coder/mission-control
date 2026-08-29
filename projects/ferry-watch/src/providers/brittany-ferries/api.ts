@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { Watch } from "../../config.js";
 import type { PetOption, Sailing } from "../../types.js";
 import { toPortCode } from "./ports.js";
@@ -74,7 +77,34 @@ async function postJson(
     const detail = await response.text().catch(() => "");
     throw new Error(`${path} returned ${response.status}: ${detail.slice(0, 200)}`);
   }
-  return response.json();
+
+  const payload: unknown = await response.json();
+  dump(path, body, payload);
+  return payload;
+}
+
+/**
+ * Writes the exact request and response to FERRY_WATCH_DUMP_DIR when set.
+ *
+ * A run that finds nothing is ambiguous: the operator may genuinely have no
+ * pet cabins, or the parser may be looking in the wrong place. Only the raw
+ * payload separates the two, and mirroring the request in a separate curl
+ * drifts out of step with the code. Off unless the variable is set.
+ */
+let dumpSeq = 0;
+function dump(path: string, request: unknown, response: unknown): void {
+  const dir = process.env.FERRY_WATCH_DUMP_DIR;
+  if (!dir) return;
+  try {
+    mkdirSync(dir, { recursive: true });
+    const name = `${String(++dumpSeq).padStart(3, "0")}${path.replace(/\//g, "-")}.json`;
+    writeFileSync(
+      join(dir, name),
+      JSON.stringify({ path, request, response }, null, 2),
+    );
+  } catch {
+    // Diagnostics must never break a live sweep.
+  }
 }
 
 /** Inclusive `YYYY-MM-DD` range split into windows of at most `days`. */

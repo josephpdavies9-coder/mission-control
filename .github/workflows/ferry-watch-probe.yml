@@ -39,35 +39,35 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Raw payload first. If the provider parses nothing, this shows whether
-      # the fault is the request, the response shape, or the filter. The body
-      # mirrors exactly what src/providers/brittany-ferries/api.ts sends.
-      # Only step one is curl-able standalone — step two needs a shipName and
-      # ticketTier that only step one can supply, so the provider run covers it.
-      - name: Capture raw /crossing/prices
-        continue-on-error: true
-        run: |
-          mkdir -p calibration
-          curl -sS -m 60 -o calibration/prices.json -w 'HTTP %{http_code}\n' \
-            'https://www.brittany-ferries.co.uk/api/bebop/v1/crossing/prices' \
-            -H 'content-type: application/json' \
-            -H 'accept: application/json' \
-            -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' \
-            --data-binary '{"bookingReference":null,"pets":{"smallDogs":1,"largeDogs":0,"cats":0},"passengers":{"adults":2,"children":0,"infants":0},"vehicle":{"type":"CAR","registrations":["TBC"],"height":183,"length":500,"extras":{"rearMountedBikeCarrier":null}},"departurePort":"GBPME","arrivalPort":"ESSDR","disability":null,"direction":"outbound","fromDate":"2026-09-25","toDate":"2026-10-01"}'
-          echo "--- first 4000 bytes ---"
-          head -c 4000 calibration/prices.json; echo
-
       - name: Prepare config
         run: cp ferry-watch.config.example.json ferry-watch.config.json
 
       # The real thing: the provider's own two-step sequence across all three
       # UK-to-Spain crossings. --dry-run means no email is attempted.
+      # FERRY_WATCH_DUMP_DIR makes the provider write the exact request and
+      # response for every call. A sweep that finds nothing is otherwise
+      # ambiguous — no pet cabins on sale, or a parser looking in the wrong
+      # place — and only the raw payload tells those apart. Mirroring the
+      # request in a separate curl drifts out of step with the code, which is
+      # exactly what happened: the curl 400'd on a date format the provider
+      # never sends.
       - name: Run a live check
+        env:
+          FERRY_WATCH_DUMP_DIR: ./calibration
         run: |
           # Without pipefail the pipe hides a total failure behind head's exit 0,
           # so a sweep where every route errored would report green.
           set -o pipefail
           pnpm exec tsx src/cli.ts check --dry-run 2>&1 | head -200
+
+      - name: Summarise captured payloads
+        if: always()
+        run: |
+          for f in calibration/*.json; do
+            [ -e "$f" ] || continue
+            echo "=== $f ($(wc -c < "$f") bytes) ==="
+            head -c 2500 "$f"; echo; echo
+          done
 
       - name: Upload captured payloads
         if: always()
