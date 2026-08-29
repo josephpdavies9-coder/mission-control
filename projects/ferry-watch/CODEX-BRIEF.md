@@ -1,3 +1,15 @@
+> **Superseded — kept for the record.**
+>
+> This brief was written before the API was found, and describes the problem as
+> it looked when browser automation seemed to be the only route. It is wrong
+> about that, and about several details it states as established fact.
+>
+> What actually works is in [FINDINGS.md](./FINDINGS.md) and implemented in
+> `src/providers/brittany-ferries/api.ts`. Read those instead. This file
+> survives only because the parallel attempt it briefed is what found the two
+> endpoints, and because the traps it lists are a fair record of what the
+> problem looked like from inside the wrong approach.
+
 # Build brief: pet-friendly ferry cabin alerts (independent attempt)
 
 Build a tool that emails me as soon as a **pet-friendly cabin** becomes available
