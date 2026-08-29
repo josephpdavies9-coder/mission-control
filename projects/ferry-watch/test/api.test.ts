@@ -83,3 +83,59 @@ describe("petCabinsFrom", () => {
     expect(petCabinsFrom(payload)).toHaveLength(1);
   });
 });
+
+// The shape below is copied from a live /crossing/prices response captured on
+// a GitHub runner, not invented. Field names here are the whole point: an
+// earlier version looked for a "departureDate" string that does not exist.
+const LIVE_SAILING = {
+  departureDateTime: { iso: "2026-09-25T21:00:00Z", date: "2026-09-25", time: "22:00" },
+  arrivalDateTime: { iso: "2026-09-27T06:00:00Z", date: "2026-09-27", time: "08:00" },
+  adjustedDepartureDateTime: {
+    iso: "2026-09-25T21:00:00Z",
+    date: "2026-09-25",
+    time: "22:00",
+  },
+  departurePort: "GBPME",
+  arrivalPort: "ESSDR",
+  shipName: "Salamanca",
+  shipType: "cruise",
+  standardPrice: { amount: 334, economy: null, discounted: false },
+  cabinPrice: { amount: 32, economy: 0, discounted: false },
+  sailingId: 418542,
+  full: false,
+  isCabinSpaceFull: true,
+  isSeatSpaceFull: false,
+  isPetAllowed: true,
+  isAccommodationMandatory: true,
+  petAvailabilities: {
+    kennelAvailable: false,
+    smallKennelAvailable: true,
+    petCabinAvailable: false,
+    stayInCarAvailable: false,
+    petAvailability: true,
+  },
+  wheelchairCabinsAvailable: false,
+};
+
+const LIVE_PRICES = { crossings: [LIVE_SAILING], currency: "GBP" };
+
+describe("live payload shape", () => {
+  it("finds the sailing under the crossings key", () => {
+    expect(extractCandidates(LIVE_PRICES)).toHaveLength(1);
+  });
+
+  it("does not flag a sailing whose pet cabins are gone", () => {
+    // petAvailability is true and smallKennelAvailable is true on this very
+    // sailing. Neither is a pet cabin, and treating either as one would alert
+    // on a kennel — the exact false positive this watcher exists to avoid.
+    expect(petCabinAvailable(LIVE_SAILING)).toBe(false);
+  });
+
+  it("flags the same sailing once a pet cabin returns", () => {
+    const returned = {
+      ...LIVE_SAILING,
+      petAvailabilities: { ...LIVE_SAILING.petAvailabilities, petCabinAvailable: true },
+    };
+    expect(petCabinAvailable(returned)).toBe(true);
+  });
+});

@@ -167,6 +167,61 @@ means the ship *has* pet cabins, not that any remain unsold. Alerting on the
 flag alone would produce a constant stream of false positives — which is
 exactly the failure mode a pet-cabin watcher exists to avoid.
 
+### The real payload shape (captured live, 29 Aug 2026)
+
+`/crossing/prices` answers `{ crossings, currency }`. Each crossing:
+
+```json
+{
+  "departureDateTime": { "iso": "2026-09-25T21:00:00Z", "date": "2026-09-25", "time": "22:00" },
+  "arrivalDateTime":   { "iso": "2026-09-27T06:00:00Z", "date": "2026-09-27", "time": "08:00" },
+  "departurePort": "GBPME", "arrivalPort": "ESSDR",
+  "shipName": "Salamanca", "shipType": "cruise",
+  "standardPrice": { "amount": 334 }, "flexiPrice": { "amount": 344 },
+  "cabinPrice": { "amount": 32 },
+  "sailingId": 418542,
+  "isCabinSpaceFull": true, "isPetAllowed": true,
+  "petAvailabilities": {
+    "kennelAvailable": false, "smallKennelAvailable": true,
+    "petCabinAvailable": false, "stayInCarAvailable": false,
+    "petAvailability": true
+  }
+}
+```
+
+Three things here cost a bug each, and all three are now covered by tests
+built from this exact payload:
+
+**There is no `departureDate` field.** The date arrives as an object. Reading
+it as a string produced `""`, and a sailing with no departure date was
+skipped — so the accommodations call could never have fired even once a pet
+cabin appeared. A watcher that silently skips the only event it exists for is
+worse than one that crashes.
+
+**`petAvailability` is a decoy.** It is a boolean *inside* `petAvailabilities`
+and it is `true` on a sailing with no pet cabin. Anything keying off the name
+alone alerts on kennels. Likewise `smallKennelAvailable: true` sits beside
+`petCabinAvailable: false` on the same sailing — these flags are per-facility
+stock, not ship capability.
+
+**A key-presence test finds the same sailing twice**, because the inner
+`petAvailabilities` object contains a key called `petAvailability`. A sailing
+is now identified by having *structured* pet availability, not by a key name.
+
+### Current state of the route (29 Aug 2026)
+
+Across all three UK→Spain crossings and the full 25 Sep – 7 Oct 2026 window:
+**every sailing reports `petCabinAvailable: false`.** Kennels are available on
+several; pet cabins on none. So "0 matching" is a true reading, not a parser
+failure — and it is exactly the state the watcher exists to see change.
+
+One consequence worth stating plainly: because nothing has ever been flagged,
+`/crossing/accommodations` **has never actually run**. Its request shape came
+from a paste and its response shape is unverified. That is why the second call
+is treated as enrichment rather than a gate — a flagged sailing is reported
+whether or not that call succeeds. Getting less detail in an alert is a small
+cost; missing the alert entirely is not.
+
 ### Practical limits
 
 Date windows are requested seven days at a time and paced 800ms apart, with

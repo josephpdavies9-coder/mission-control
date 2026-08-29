@@ -146,7 +146,12 @@ export function extractCandidates(payload: unknown): Record<string, unknown>[] {
     }
     const record = asRecord(node);
     if (!record) return;
-    if ("petAvailabilities" in record || "petAvailability" in record) {
+    // Presence of the key is not enough. The petAvailabilities object itself
+    // contains a boolean named petAvailability, so a key test matches it too
+    // and reports one sailing as two. A sailing is a record whose pet
+    // availability is itself structured.
+    const pets = record.petAvailabilities ?? record.petAvailability;
+    if (asRecord(pets) !== null || Array.isArray(pets)) {
       found.push(record);
     }
     for (const value of Object.values(record)) walk(value, depth + 1);
@@ -240,13 +245,41 @@ export async function fetchAccommodations(
   });
 }
 
-/** Reads a string field from a sailing under any of several likely names. */
+/** Reads a string or number field from a sailing under any of several names. */
 function pick(record: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "string" && value) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
+}
+
+/**
+ * Reads a timestamp that the operator sends as an object, not a string.
+ *
+ * A sailing carries `departureDateTime: { iso, date, time }` — there is no
+ * plain `departureDate` field at all. Reading it as a string yielded "", and
+ * because a missing departure date skipped the sailing, the accommodations
+ * lookup could never have fired even once a pet cabin appeared. Confirmed
+ * against live payloads.
+ */
+function pickDateTime(
+  record: Record<string, unknown>,
+  keys: string[],
+): { iso: string; date: string } {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value) {
+      return { iso: value, date: value.slice(0, 10) };
+    }
+    const nested = asRecord(value);
+    if (!nested) continue;
+    const iso = typeof nested.iso === "string" ? nested.iso : "";
+    const date = typeof nested.date === "string" ? nested.date : iso.slice(0, 10);
+    if (iso || date) return { iso: iso || date, date };
+  }
+  return { iso: "", date: "" };
 }
 
 /**
@@ -266,37 +299,64 @@ export async function readAvailability(
     for (const candidate of extractCandidates(prices)) {
       if (!petCabinAvailable(candidate)) continue;
 
-      const departureDate = pick(candidate, [
-        "departureDate",
+      const departure = pickDateTime(candidate, [
         "departureDateTime",
+        "adjustedDepartureDateTime",
+        "departureDate",
         "departure",
       ]);
+      const arrival = pickDateTime(candidate, [
+        "arrivalDateTime",
+        "adjustedArrivalDateTime",
+      ]);
       const shipName = pick(candidate, ["shipName", "ship", "vessel"]);
-      const tier = pick(candidate, ["ticketTier", "tier", "fareTier"]) || "STANDARD";
-      if (!departureDate || !shipName) continue;
+      if (!departure.date) continue;
 
-      const accommodations = await fetchAccommodations(
-        watch,
-        departureDate,
-        shipName,
-        tier,
-      );
-      const petOptions = petCabinsFrom(accommodations);
-      if (petOptions.length === 0) continue;
+      // The second call adds which cabin and at what price. It is enrichment,
+      // not a gate: the flag above is already per-sailing stock — the same
+      // payload shows kennelAvailable false beside smallKennelAvailable true —
+      // so dropping a flagged sailing because this call returned nothing
+      // parseable would lose the one event the whole watcher exists for.
+      let petOptions: PetOption[] = [];
+      if (shipName) {
+        try {
+          const tier = pick(candidate, ["ticketTier", "tier", "fareTier"]) || "STANDARD";
+          petOptions = petCabinsFrom(
+            await fetchAccommodations(watch, departure.date, shipName, tier),
+          );
+        } catch (error) {
+          log(`  accommodations lookup failed: ${(error as Error).message}`);
+        }
+        // Considerate pacing between accommodation lookups.
+        await new Promise((r) => setTimeout(r, 800));
+      }
+
+      if (petOptions.length === 0) {
+        petOptions = [
+          {
+            code: "pet-cabin",
+            label: "Pet-friendly cabin",
+            kind: "pet-friendly-cabin",
+            available: true,
+            remaining: null,
+            price: null,
+            currency: "GBP",
+          },
+        ];
+      }
 
       sailings.push({
-        id: pick(candidate, ["id", "crossingId", "sailingId"]) || `${shipName}-${departureDate}`,
+        id:
+          pick(candidate, ["sailingId", "id", "crossingId"]) ||
+          `${shipName}-${departure.date}`,
         routeFrom: watch.routeFrom,
         routeTo: watch.routeTo,
-        departAt: departureDate.replace("Z", "").slice(0, 19),
-        arriveAt: null,
-        shipName,
+        departAt: departure.iso.replace("Z", "").slice(0, 19),
+        arriveAt: arrival.iso ? arrival.iso.replace("Z", "").slice(0, 19) : null,
+        shipName: shipName || null,
         petOptions,
         bookingUrl: "https://www.brittany-ferries.co.uk/booking",
       });
-
-      // Considerate pacing between accommodation lookups.
-      await new Promise((r) => setTimeout(r, 800));
     }
   }
 
