@@ -413,12 +413,7 @@ export async function driveSearch(
       settleMs: 6000,
     });
 
-    console.log("Steps:");
-    for (const step of outcome.steps) {
-      console.log(`  ${step.ok ? "ok  " : "FAIL"} ${step.step}: ${step.detail}`);
-    }
-
-    console.log(`\nFinal URL: ${outcome.finalUrl}`);
+    console.log(`Final URL: ${outcome.finalUrl}`);
     console.log(`Title:     ${outcome.title}\n`);
 
     await analyseRecording(
@@ -433,6 +428,12 @@ export async function driveSearch(
       watch,
       outputDir,
     );
+
+    // Printed last so the smallest possible log tail still shows it.
+    console.log("\n=== STEPS ===");
+    for (const step of outcome.steps) {
+      console.log(`  ${step.ok ? "ok  " : "FAIL"} ${step.step}: ${step.detail}`);
+    }
   } finally {
     await session.close();
   }

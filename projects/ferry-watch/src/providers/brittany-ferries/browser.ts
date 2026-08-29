@@ -133,7 +133,7 @@ interface PlaywrightPage {
   evaluate<T>(fn: string): Promise<T>;
   waitForLoadState(state: string, options: { timeout: number }): Promise<void>;
   waitForSelector(selector: string, options: { timeout: number }): Promise<unknown>;
-  click(selector: string, options: { timeout: number }): Promise<void>;
+  click(selector: string, options: { timeout: number; force?: boolean }): Promise<void>;
   fill(selector: string, value: string, options: { timeout: number }): Promise<void>;
   press(selector: string, key: string, options: { timeout: number }): Promise<void>;
   content(): Promise<string>;
@@ -578,16 +578,30 @@ export async function launchBrowser(
         }
         const selectId = found.slice(3);
 
-        await page.click(`#${selectId}`, { timeout: 8000 }).catch(() => undefined);
+        let clickNote = "";
+        const tryClick = async (opts: { timeout: number; force?: boolean }) => {
+          try {
+            await page.click(`#${selectId}`, opts);
+            return "ok";
+          } catch (error) {
+            return `threw:${String(error).slice(0, 120)}`;
+          }
+        };
+
+        clickNote = await tryClick({ timeout: 8000 });
         await new Promise((r) => setTimeout(r, 1200));
 
-        // A re-render can leave the panel empty for a moment; give it a second
-        // real click before concluding there is nothing there.
+        // A re-render can leave the panel empty for a moment, and an element
+        // Playwright judges unactionable needs forcing rather than retrying.
         if ((await countOptions()) === 0) {
-          await page.click(`#${selectId}`, { timeout: 6000 }).catch(() => undefined);
+          clickNote += ` | retry:${await tryClick({ timeout: 6000 })}`;
           await new Promise((r) => setTimeout(r, 1200));
         }
-        const opened = `opened|${selectId}`;
+        if ((await countOptions()) === 0) {
+          clickNote += ` | forced:${await tryClick({ timeout: 6000, force: true })}`;
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+        const opened = `${selectId} click=${clickNote}`;
 
         // The arrow icon is a text ligature inside the option, so strip it
         // before matching or "Portsmouth -> Santander" never matches.
