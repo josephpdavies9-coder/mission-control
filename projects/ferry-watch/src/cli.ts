@@ -11,6 +11,7 @@ import { createMailer } from "./notify/index.js";
 import { renderAlert } from "./notify/template.js";
 import {
   calibrate,
+  inspectForm,
   probeCalibration,
   recordCalibration,
 } from "./providers/brittany-ferries/calibrate.js";
@@ -25,6 +26,7 @@ Usage:
   ferry-watch calibrate  [options]   Capture what the booking site returns
                                      (--record to drive the site yourself)
   ferry-watch probe      [options]   Non-interactive calibration, for CI logs
+  ferry-watch inspect    [options]   List the booking page's form controls
   ferry-watch test-email [options]   Send a sample alert to prove delivery works
 
 Options:
@@ -171,6 +173,11 @@ async function main(): Promise<number> {
         cli.startUrl ?? defaultStartUrl(config),
         cli.wait,
       );
+      return 0;
+    }
+
+    case "inspect": {
+      await inspectForm(config, cli.startUrl ?? defaultStartUrl(config));
       return 0;
     }
 

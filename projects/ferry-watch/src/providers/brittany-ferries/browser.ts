@@ -9,6 +9,26 @@ export interface CapturedResponse {
   body: unknown;
 }
 
+/** An outgoing request, so the call the app makes can be replayed. */
+export interface CapturedRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+}
+
+/** One interactive control on a page, for working out how to drive a form. */
+export interface ControlInfo {
+  tag: string;
+  type: string;
+  id: string;
+  name: string;
+  placeholder: string;
+  ariaLabel: string;
+  testId: string;
+  text: string;
+  visible: boolean;
+}
+
 export interface BrowserOptions {
   headless: boolean;
   timeoutMs: number;
@@ -26,6 +46,8 @@ export interface VisitOptions {
 /** Everything observed while the user drove the site by hand. */
 export interface RecordResult {
   captured: CapturedResponse[];
+  /** Requests to anything API-shaped, with headers. */
+  requests: CapturedRequest[];
   /** HTML page URLs navigated through, in order — the search URL is among these. */
   pageUrls: string[];
   /** Where the browser ended up when recording stopped. */
@@ -43,6 +65,8 @@ export interface BrowserSession {
    * `stop` resolves, so a human can click the booking flow themselves.
    */
   record(startUrl: string, stop: () => Promise<void>): Promise<RecordResult>;
+  /** Lists the interactive controls on a page, to work out how to drive it. */
+  inspect(url: string, consentSelector: string): Promise<ControlInfo[]>;
   pause(ms: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -55,9 +79,17 @@ interface PlaywrightResponse {
   json(): Promise<unknown>;
 }
 
+interface PlaywrightRequest {
+  url(): string;
+  method(): string;
+  headers(): Record<string, string>;
+}
+
 interface PlaywrightPage {
   goto(url: string, options: { waitUntil: string; timeout: number }): Promise<unknown>;
   on(event: "response", handler: (response: PlaywrightResponse) => void): void;
+  on(event: "request", handler: (request: PlaywrightRequest) => void): void;
+  evaluate<T>(fn: string): Promise<T>;
   waitForLoadState(state: string, options: { timeout: number }): Promise<void>;
   waitForSelector(selector: string, options: { timeout: number }): Promise<unknown>;
   click(selector: string, options: { timeout: number }): Promise<void>;
@@ -153,8 +185,21 @@ export async function launchBrowser(
     async record(startUrl, stop) {
       const page = await context.newPage();
       const captured: CapturedResponse[] = [];
+      const requests: CapturedRequest[] = [];
       const pageUrls: string[] = [];
       const pending: Promise<void>[] = [];
+
+      // The headers on the app's own availability call are the thing a bare
+      // curl is missing, so record them.
+      page.on("request", (request) => {
+        const url = request.url();
+        if (!/\/api\/|graphql|avail|crossing|sailing/i.test(url)) return;
+        requests.push({
+          url,
+          method: request.method(),
+          headers: request.headers(),
+        });
+      });
 
       page.on("response", (response) => {
         if (!response.ok()) return;
@@ -193,11 +238,55 @@ export async function launchBrowser(
 
       return {
         captured,
+        requests,
         pageUrls,
         finalUrl: page.url(),
         title,
         htmlLength: html.length,
       };
+    },
+
+    async inspect(url, consentSelector) {
+      const page = await context.newPage();
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: options.timeoutMs,
+      });
+      if (consentSelector) {
+        await page.click(consentSelector, { timeout: 8000 }).catch(() => undefined);
+      }
+      await page
+        .waitForLoadState("networkidle", { timeout: options.timeoutMs })
+        .catch(() => undefined);
+
+      // Serialised as a string so no bundler transform is needed, and read
+      // back as JSON rather than trusting structured cloning of DOM nodes.
+      const json = await page.evaluate<string>(`
+        JSON.stringify(
+          Array.from(
+            document.querySelectorAll('input, select, button, [role="button"], [role="combobox"], a[href*="book"]')
+          ).map(function (el) {
+            var r = el.getBoundingClientRect();
+            return {
+              tag: el.tagName.toLowerCase(),
+              type: el.getAttribute('type') || '',
+              id: el.id || '',
+              name: el.getAttribute('name') || '',
+              placeholder: el.getAttribute('placeholder') || '',
+              ariaLabel: el.getAttribute('aria-label') || '',
+              testId: el.getAttribute('data-testid') || el.getAttribute('data-test') || '',
+              text: (el.textContent || '').trim().slice(0, 60),
+              visible: r.width > 0 && r.height > 0
+            };
+          })
+        )
+      `);
+
+      try {
+        return JSON.parse(json) as ControlInfo[];
+      } catch {
+        return [];
+      }
     },
 
     async pause(ms) {

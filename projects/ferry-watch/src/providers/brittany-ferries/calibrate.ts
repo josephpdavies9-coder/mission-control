@@ -140,7 +140,21 @@ async function analyseRecording(
   console.log(`Final URL:   ${result.finalUrl}`);
   console.log(`HTML size:   ${result.htmlLength} bytes`);
   console.log(`Pages seen:  ${result.pageUrls.length}`);
-  console.log(`JSON responses captured: ${result.captured.length}\n`);
+  console.log(`JSON responses captured: ${result.captured.length}`);
+  console.log(`API requests observed:   ${result.requests.length}\n`);
+
+  // The app's own call is what a bare curl cannot reproduce, so show it in
+  // full: URL, method and headers.
+  for (const request of result.requests) {
+    console.log(`REQ  ${request.method} ${request.url}`);
+    for (const [key, value] of Object.entries(request.headers)) {
+      if (/^(host|accept|content-type|authorization|x-|cookie|referer|origin)/i.test(key)) {
+        const shown = key.toLowerCase() === "cookie" ? `<${value.length} bytes>` : value;
+        console.log(`       ${key}: ${shown.slice(0, 160)}`);
+      }
+    }
+  }
+  if (result.requests.length > 0) console.log();
 
   if (/just a moment|access denied|are you a robot|checking your browser/i.test(result.title)) {
     console.log(
@@ -288,6 +302,48 @@ export async function recordCalibration(
       rl.close();
     });
     await analyseRecording(result, watch, outputDir);
+  } finally {
+    await session.close();
+  }
+}
+
+
+/**
+ * Lists the interactive controls on the booking page. Driving a form blind is
+ * what wasted time before; this reports what is actually there so the search
+ * can be automated against real selectors.
+ */
+export async function inspectForm(
+  config: Config,
+  url: string,
+): Promise<void> {
+  const selectors = resolveSelectors(config.browser.selectors);
+  console.log(`Inspecting controls on ${url}\n`);
+
+  const session = await launchBrowser({
+    headless: true,
+    timeoutMs: config.browser.timeoutSeconds * 1000,
+    responseUrlPattern: ".",
+    executablePath: config.browser.executablePath,
+  });
+
+  try {
+    const controls = await session.inspect(url, selectors.consentSelector);
+    const visible = controls.filter((control) => control.visible);
+    console.log(`${controls.length} controls, ${visible.length} visible.\n`);
+
+    for (const control of visible) {
+      const parts = [
+        control.tag + (control.type ? `[${control.type}]` : ""),
+        control.id && `#${control.id}`,
+        control.name && `name=${control.name}`,
+        control.testId && `testid=${control.testId}`,
+        control.placeholder && `placeholder="${control.placeholder}"`,
+        control.ariaLabel && `aria="${control.ariaLabel}"`,
+        control.text && `text="${control.text}"`,
+      ].filter(Boolean);
+      console.log(`  ${parts.join("  ")}`);
+    }
   } finally {
     await session.close();
   }

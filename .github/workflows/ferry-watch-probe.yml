@@ -61,26 +61,24 @@ jobs:
             echo
           done
 
-      # dog.boats served 28 KB of static HTML with no application JavaScript,
-      # so its availability must be pre-rendered by a backend. Read its actual
-      # prose — it may say how it worked, and why the alerts stopped.
-      - name: Read what dog.boats says
+      - name: Prepare config
+        run: cp ferry-watch.config.example.json ferry-watch.config.json
+
+      # Driving the booking form blind is what wasted time before. List the
+      # real controls first, then automate against them.
+      - name: Inspect the booking form
         continue-on-error: true
-        env:
-          UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         run: |
-          for page in "" about.html faq.html alerts.html privacy.html; do
-            url="https://www.dog.boats/$page"
+          for url in \
+            "https://www.brittany-ferries.co.uk/" \
+            "https://www.brittany-ferries.co.uk/routes/portsmouth-santander" \
+            "https://www.brittany-ferries.co.uk/booking"; do
             echo "=============================================="
-            echo "=== $url"
-            curl -sS -m 30 -L -H "User-Agent: $UA" "$url" -o /tmp/p.html \
-              -w 'status: %{http_code}  size: %{size_download}\n' || continue
-            python3 scripts/strip-html.py /tmp/p.html
+            echo "### $url"
+            pnpm exec tsx src/cli.ts inspect --start-url "$url" 2>&1 | head -70
             echo
           done
 
-      - name: Prepare config
-        run: cp ferry-watch.config.example.json ferry-watch.config.json
 
       - name: Probe
         continue-on-error: true
