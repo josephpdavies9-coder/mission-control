@@ -651,10 +651,16 @@ export async function launchBrowser(
               // inbound". querySelectorAll returns both; Playwright will only
               // click a visible one. Matching the hidden copy is why every
               // click timed out and every forced click found no options.
-              var sels = Array.from(document.querySelectorAll('mat-select')).filter(function(s){
-                var r = s.getBoundingClientRect();
-                return r.width > 0 && r.height > 0;
-              });
+              // A non-zero rect is NOT visibility: an element with
+              // visibility:hidden still has one, which is why filtering on the
+              // rect alone did not help. Use the browser's own definition.
+              function visible(el){
+                if (el.checkVisibility) return el.checkVisibility({checkOpacity:true, checkVisibilityCSS:true});
+                var r = el.getBoundingClientRect();
+                var st = getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
+              }
+              var sels = Array.from(document.querySelectorAll('mat-select')).filter(visible);
               var hit = sels.filter(function(s){
                 var f = s.closest('mat-form-field');
                 return f && /${labelPattern}/i.test(f.textContent||'');
@@ -896,6 +902,28 @@ export async function launchBrowser(
       note("inbound-date", !inboundSet.startsWith("none"), inboundSet);
 
       await pickOption("pet", ["pet"], "pets");
+
+      // If anything above failed, report the real state of every control so
+      // the next change is informed rather than another guess.
+      if (steps.some((step) => !step.ok)) {
+        const state = await page
+          .evaluate<string>(
+            `JSON.stringify(Array.from(document.querySelectorAll('mat-select')).map(function(el){
+              var f = el.closest('mat-form-field');
+              var r = el.getBoundingClientRect();
+              var st = getComputedStyle(el);
+              return {
+                label: f ? (f.textContent||'').trim().slice(0,30) : '?',
+                w: Math.round(r.width), h: Math.round(r.height),
+                vis: st.visibility, disp: st.display,
+                aria: el.getAttribute('aria-disabled'),
+                cls: (el.className||'').toString().slice(0,60)
+              };
+            }))`,
+          )
+          .catch(() => "[]");
+        note("control-state", true, state);
+      }
 
       const submitted = await page
         .click('[data-testid="submit"]', { timeout: 10000 })
