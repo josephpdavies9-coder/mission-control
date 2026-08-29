@@ -659,20 +659,13 @@ export async function launchBrowser(
         .catch(() => "[]");
       note("radio-labels", true, radios);
 
-      const oneWay = await page
-        .evaluate<string>(
-          `(function(){
-            var rs = Array.from(document.querySelectorAll('mat-radio-button'));
-            var hit = rs.filter(function(r){ return /one.?way|single/i.test(r.textContent||''); })[0];
-            if (!hit) return 'not-found';
-            var input = hit.querySelector('input');
-            (input || hit).click();
-            return 'clicked|' + (hit.textContent||'').trim().slice(0,30);
-          })()`,
-        )
-        .catch((e) => `error|${e}`);
-      note("one-way", oneWay.startsWith("clicked"), oneWay);
-      await new Promise((r) => setTimeout(r, 800));
+      // Deliberately NOT selecting "One way". Doing so removes the inbound
+      // date field, and every dropdown opened after that re-render renders
+      // zero options — reproduced across three runs, with the clicks
+      // themselves reported as succeeding. The default return trip leaves the
+      // form in the state where the dropdowns demonstrably work, and an
+      // outbound pet cabin is listed either way.
+      note("trip-type", true, "left as default (return) — one-way breaks the dropdowns");
 
       await pickOption("outbound route|route", [plan.routeFrom, plan.routeTo], "route");
 
@@ -716,6 +709,32 @@ export async function launchBrowser(
       } else {
         note("date", true, dateSet);
       }
+
+      // A return trip requires an inbound date before it will search.
+      const inbound = new Date(`${plan.date}T00:00:00Z`);
+      inbound.setUTCDate(inbound.getUTCDate() + 7);
+      const [iy, im, id] = inbound.toISOString().slice(0, 10).split("-");
+      let inboundSet = "none";
+      for (const value of [`${id}/${im}/${iy}`, `${iy}-${im}-${id}`]) {
+        await page.click('[data-testid="inwardDate"]', { timeout: 6000 }).catch(() => undefined);
+        await page
+          .fill('[data-testid="inwardDate"]', value, { timeout: 6000 })
+          .catch(() => undefined);
+        await page
+          .press('[data-testid="inwardDate"]', "Tab", { timeout: 4000 })
+          .catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 700));
+        const got = await page
+          .evaluate<string>(
+            `(document.querySelector('[data-testid="inwardDate"]')||{}).value || ''`,
+          )
+          .catch(() => "");
+        if (got.trim().length > 0) {
+          inboundSet = `${value} -> "${got}"`;
+          break;
+        }
+      }
+      note("inbound-date", inboundSet !== "none", inboundSet);
 
       await pickOption("pet", ["pet"], "pets");
 
