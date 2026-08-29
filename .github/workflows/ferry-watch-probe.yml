@@ -61,53 +61,41 @@ jobs:
             echo
           done
 
-      # dog.boats solved this exact problem before dropping its alerts. Its
-      # front-end code is public, served to any browser, so how it reads
-      # availability is directly observable rather than guesswork.
-      - name: How does dog.boats do it?
+      # dog.boats served 28 KB of static HTML with no application JavaScript,
+      # so its availability must be pre-rendered by a backend. Read its actual
+      # prose — it may say how it worked, and why the alerts stopped.
+      - name: Read what dog.boats says
         continue-on-error: true
         env:
           UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         run: |
-          mkdir -p /tmp/dogboats
-          echo "=== landing page ==="
-          curl -sS -m 30 -L -H "User-Agent: $UA" https://www.dog.boats/ \
-            -o /tmp/dogboats/index.html -w 'status: %{http_code}  size: %{size_download}\n'
-
-          echo
-          echo "=== page text (tags stripped) ==="
-          sed 's/<[^>]*>/ /g' /tmp/dogboats/index.html | tr -s ' \n' ' \n' | head -60
-
-          echo
-          echo "=== referenced scripts and endpoints ==="
-          grep -oE '(src|href)="[^"]+"' /tmp/dogboats/index.html | sort -u | head -40
-
-          echo
-          echo "=== does the page itself mention the operator or an API? ==="
-          grep -oiE '(bebop|brittany[-a-z]*|crossing|availability|api/[a-z0-9/._-]*|fetch\(|firebase|supabase|amazonaws|workers\.dev)' \
-            /tmp/dogboats/index.html | sort | uniq -c | sort -rn | head -30
-
-          echo
-          echo "=== fetch each script and look inside ==="
-          grep -oE 'src="[^"]+\.js[^"]*"' /tmp/dogboats/index.html \
-            | sed 's/src="//; s/"$//' | sort -u | head -12 | while read -r js; do
-            case "$js" in
-              http*) url="$js" ;;
-              /*)    url="https://www.dog.boats$js" ;;
-              *)     url="https://www.dog.boats/$js" ;;
-            esac
+          for page in "" about.html faq.html alerts.html privacy.html; do
+            url="https://www.dog.boats/$page"
+            echo "=============================================="
+            echo "=== $url"
+            curl -sS -m 30 -L -H "User-Agent: $UA" "$url" -o /tmp/p.html \
+              -w 'status: %{http_code}  size: %{size_download}\n' || continue
+            # Drop style/script blocks before stripping tags, so prose survives.
+            python3 - <<'PY2'
+import re, pathlib
+html = pathlib.Path("/tmp/p.html").read_text(errors="replace")
+html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+text = re.sub(r"(?s)<[^>]+>", " ", html)
+text = re.sub(r"[ \t]+", " ", text)
+lines = [l.strip() for l in text.splitlines()]
+out, blank = [], 0
+for l in lines:
+    if not l:
+        blank += 1
+        continue
+    if blank:
+        out.append("")
+    blank = 0
+    out.append(l)
+print("\n".join(out)[:6000])
+PY2
             echo
-            echo "--- $url"
-            curl -sS -m 30 -L -H "User-Agent: $UA" "$url" -o /tmp/dogboats/bundle.js \
-              -w '    status: %{http_code}  size: %{size_download}\n'
-            echo "    interesting strings:"
-            grep -oiE '(https?://[a-z0-9._/-]*(brittany|bebop|dog\.boats|workers\.dev|firebase|supabase|amazonaws)[a-z0-9._/?=&-]*)' \
-              /tmp/dogboats/bundle.js | sort -u | head -20 | sed 's/^/      /'
-            grep -oiE '"(/api/[a-z0-9/._-]+)"' /tmp/dogboats/bundle.js | sort -u | head -20 | sed 's/^/      /'
-            grep -oiE '(departurePort|arrivalPort|departureDate|routeCode|offerCode|tariff|petCabin|pet_cabin|accommodationCode)[A-Za-z]*' \
-              /tmp/dogboats/bundle.js | sort -u | head -20 | sed 's/^/      /'
           done
-
       - name: Prepare config
         run: cp ferry-watch.config.example.json ferry-watch.config.json
 
