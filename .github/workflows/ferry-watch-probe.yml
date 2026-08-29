@@ -20,7 +20,11 @@ on:
   # from a branch without waiting for it to reach the default branch.
   push:
     branches: [claude/custom-dog-boats-email-awyeg5]
-    paths: [".github/workflows/ferry-watch-probe.yml"]
+    # Also re-run when the probe code changes, not just the workflow file —
+    # otherwise a code-only fix silently never gets exercised.
+    paths:
+      - ".github/workflows/ferry-watch-probe.yml"
+      - "projects/ferry-watch/src/**"
 
 jobs:
   probe:
