@@ -19,6 +19,11 @@ on:
         description: "End of departure window (YYYY-MM-DD)"
         required: false
         default: ""
+      probeAccommodations:
+        description: "Search for the accommodations request shape"
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [claude/custom-dog-boats-email-awyeg5]
     paths:
@@ -82,6 +87,14 @@ jobs:
       # part is never in the first 2 KB. These questions are: does the parser
       # see the sailings, and is petCabinAvailable ever true? A sweep finding
       # nothing is only trustworthy once the second answer is known.
+      # /crossing/accommodations rejects our body with 400 "Failed to read
+      # request" — a deserialisation failure, so a field is the wrong type or
+      # missing. Guessing one field per CI run is what made the browser work so
+      # expensive; this tries every plausible variant in one run instead.
+      - name: Find the accommodations request shape
+        if: inputs.probeAccommodations
+        run: pnpm exec tsx scripts/probe-accommodations.ts
+
       - name: Summarise captured payloads
         if: always()
         run: |
