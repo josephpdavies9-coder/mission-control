@@ -6,10 +6,12 @@ name: ferry-watch
 
 on:
   schedule:
-    # Hourly. Each run is one page load per date per route, so a wide date
-    # window is real traffic against the operator — see the README before
-    # making this more frequent.
-    - cron: "17 * * * *"
+    # Every 15 minutes. A sweep is now six JSON calls, not a browser session
+    # per date, so this is modest traffic — and pet cabins on the Spanish
+    # crossings get taken quickly, which is the whole reason for the tool.
+    # Scheduled workflows are often dispatched several minutes late on shared
+    # runners, so the real interval is longer than this asks for.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       dateFrom:
@@ -55,9 +57,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
       # Which offers have already been emailed about lives here. A cache miss
       # means at worst one repeated alert, never a missed one — which is the
       # right way round for this tool. It is deliberately not committed: this
@@ -83,6 +82,10 @@ jobs:
           FERRY_WATCH_SMTP_PORT: ${{ secrets.FERRY_WATCH_SMTP_PORT }}
           FERRY_WATCH_SMTP_PASSWORD: ${{ secrets.FERRY_WATCH_SMTP_PASSWORD }}
           FERRY_WATCH_STATE_PATH: ./ci-state/state.json
+          # Keeps the raw request and response of every call, so a sweep that
+          # breaks can be diagnosed from the artifact below rather than from
+          # a guess. Availability data only — no credentials pass through here.
+          FERRY_WATCH_DUMP_DIR: ./calibration
           DATE_FROM: ${{ github.event.inputs.dateFrom }}
           DATE_TO: ${{ github.event.inputs.dateTo }}
           DRY_RUN: ${{ github.event.inputs.dryRun }}
@@ -100,5 +103,5 @@ jobs:
         with:
           name: ferry-watch-failure
           path: projects/ferry-watch/calibration/
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 7

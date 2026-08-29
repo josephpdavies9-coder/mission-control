@@ -10,6 +10,15 @@ name: ferry-watch probe
 
 on:
   workflow_dispatch:
+    inputs:
+      dateFrom:
+        description: "Start of departure window (YYYY-MM-DD)"
+        required: false
+        default: ""
+      dateTo:
+        description: "End of departure window (YYYY-MM-DD)"
+        required: false
+        default: ""
   push:
     branches: [claude/custom-dog-boats-email-awyeg5]
     paths:
@@ -51,14 +60,23 @@ jobs:
       # request in a separate curl drifts out of step with the code, which is
       # exactly what happened: the curl 400'd on a date format the provider
       # never sends.
+      # The configured window is four weeks out and every pet cabin on it is
+      # sold out, so the accommodations call never fires there. Dispatching
+      # with a window far enough ahead to still have stock is the only way to
+      # exercise the second half of the sequence.
       - name: Run a live check
         env:
           FERRY_WATCH_DUMP_DIR: ./calibration
+          DATE_FROM: ${{ github.event.inputs.dateFrom }}
+          DATE_TO: ${{ github.event.inputs.dateTo }}
         run: |
           # Without pipefail the pipe hides a total failure behind head's exit 0,
           # so a sweep where every route errored would report green.
           set -o pipefail
-          pnpm exec tsx src/cli.ts check --dry-run 2>&1 | head -200
+          ARGS=""
+          [ -n "$DATE_FROM" ] && ARGS="$ARGS --from $DATE_FROM"
+          [ -n "$DATE_TO" ] && ARGS="$ARGS --to $DATE_TO"
+          pnpm exec tsx src/cli.ts check --dry-run $ARGS 2>&1 | head -200
 
       # Raw JSON truncated at a byte count answers nothing — the interesting
       # part is never in the first 2 KB. These questions are: does the parser
