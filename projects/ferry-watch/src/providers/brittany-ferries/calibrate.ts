@@ -148,10 +148,14 @@ async function analyseRecording(
   for (const request of result.requests) {
     console.log(`REQ  ${request.method} ${request.url}`);
     for (const [key, value] of Object.entries(request.headers)) {
-      if (/^(host|accept|content-type|authorization|x-|cookie|referer|origin)/i.test(key)) {
-        const shown = key.toLowerCase() === "cookie" ? `<${value.length} bytes>` : value;
-        console.log(`       ${key}: ${shown.slice(0, 160)}`);
+      if (!/^(host|accept|content-type|authorization|x-|cookie|referer|origin)/i.test(key)) {
+        continue;
       }
+      // Anything that could carry a credential is reported by length only, so
+      // the output is safe to paste into a chat or an issue.
+      const secret = /cookie|authorization|token|auth|key|secret|session/i.test(key);
+      const shown = secret ? `<redacted, ${value.length} bytes>` : value.slice(0, 160);
+      console.log(`       ${key}: ${shown}`);
     }
   }
   if (result.requests.length > 0) console.log();
