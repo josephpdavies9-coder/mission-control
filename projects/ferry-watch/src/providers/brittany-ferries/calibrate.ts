@@ -366,3 +366,64 @@ export async function inspectForm(
     await session.close();
   }
 }
+
+
+/**
+ * Drives the booking form end to end and reports what happened at each step.
+ *
+ * The point is the request the site's own JavaScript makes once a real search
+ * has been performed — a bare call to /crossing is refused, so the search has
+ * to actually happen. Every step reports success or failure so a run that
+ * breaks says where, rather than only that it did.
+ */
+export async function driveSearch(
+  config: Config,
+  watch: Watch,
+  outputDir: string,
+  bookingUrl: string,
+): Promise<void> {
+  const selectors = resolveSelectors(config.browser.selectors);
+  console.log(`Driving a search: ${watch.routeFrom} -> ${watch.routeTo}, ${watch.dateFrom}\n`);
+
+  const session = await launchBrowser({
+    headless: true,
+    timeoutMs: config.browser.timeoutSeconds * 1000,
+    responseUrlPattern: ".",
+    executablePath: config.browser.executablePath,
+  });
+
+  try {
+    const outcome = await session.search({
+      bookingUrl,
+      consentSelector: selectors.consentSelector,
+      routeFrom: watch.routeFrom,
+      routeTo: watch.routeTo,
+      date: watch.dateFrom,
+      pets: watch.pets,
+      settleMs: 6000,
+    });
+
+    console.log("Steps:");
+    for (const step of outcome.steps) {
+      console.log(`  ${step.ok ? "ok  " : "FAIL"} ${step.step}: ${step.detail}`);
+    }
+
+    console.log(`\nFinal URL: ${outcome.finalUrl}`);
+    console.log(`Title:     ${outcome.title}\n`);
+
+    await analyseRecording(
+      {
+        captured: outcome.captured,
+        requests: outcome.requests,
+        pageUrls: [outcome.finalUrl],
+        finalUrl: outcome.finalUrl,
+        title: outcome.title,
+        htmlLength: 0,
+      },
+      watch,
+      outputDir,
+    );
+  } finally {
+    await session.close();
+  }
+}

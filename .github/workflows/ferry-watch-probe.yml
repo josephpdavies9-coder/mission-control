@@ -70,11 +70,11 @@ jobs:
 
       # Driving the booking form blind is what wasted time before. List the
       # real controls first, then automate against them.
-      - name: Inspect the booking form
+      # Drive a real search: /crossing refuses a bare call, so the search has
+      # to actually happen for the site to make the call we need to see.
+      - name: Drive a booking search
         continue-on-error: true
-        run: |
-          pnpm exec tsx src/cli.ts inspect \
-            --start-url "https://www.brittany-ferries.co.uk/booking" 2>&1 | head -140
+        run: pnpm exec tsx src/cli.ts search 2>&1 | head -120
 
 
       - name: Probe

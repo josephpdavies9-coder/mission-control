@@ -16,6 +16,35 @@ export interface CapturedRequest {
   headers: Record<string, string>;
 }
 
+/** What to search for when driving the booking form. */
+export interface SearchPlan {
+  bookingUrl: string;
+  consentSelector: string;
+  /** Plain port names as the dropdown spells them, e.g. "Portsmouth". */
+  routeFrom: string;
+  routeTo: string;
+  /** Departure date as YYYY-MM-DD. */
+  date: string;
+  pets: number;
+  /** How long to let the results settle after submitting. */
+  settleMs: number;
+}
+
+/** One action in the flow, and whether it worked. */
+export interface SearchStep {
+  step: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface SearchOutcome {
+  steps: SearchStep[];
+  captured: CapturedResponse[];
+  requests: CapturedRequest[];
+  finalUrl: string;
+  title: string;
+}
+
 /** A dropdown and the options it offers, for working out what to pick. */
 export interface SelectInfo {
   id: string;
@@ -77,6 +106,8 @@ export interface BrowserSession {
   inspect(url: string, consentSelector: string): Promise<ControlInfo[]>;
   /** Opens each dropdown in turn and reports the options it offers. */
   enumerateSelects(url: string, consentSelector: string): Promise<SelectInfo[]>;
+  /** Drives the booking form through to the cabin step, recording everything. */
+  search(plan: SearchPlan): Promise<SearchOutcome>;
   pause(ms: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -103,6 +134,7 @@ interface PlaywrightPage {
   waitForLoadState(state: string, options: { timeout: number }): Promise<void>;
   waitForSelector(selector: string, options: { timeout: number }): Promise<unknown>;
   click(selector: string, options: { timeout: number }): Promise<void>;
+  fill(selector: string, value: string, options: { timeout: number }): Promise<void>;
   content(): Promise<string>;
   url(): string;
   title(): Promise<string>;
@@ -455,6 +487,179 @@ export async function launchBrowser(
       }
 
       return results;
+    },
+
+    async search(plan) {
+      const page = await context.newPage();
+      const captured: CapturedResponse[] = [];
+      const requests: CapturedRequest[] = [];
+      const pending: Promise<void>[] = [];
+      const steps: SearchStep[] = [];
+      const note = (step: string, ok: boolean, detail: string) => {
+        steps.push({ step, ok, detail });
+      };
+
+      page.on("request", (request) => {
+        const url = request.url();
+        if (!/\/api\/|graphql|avail|crossing|sailing/i.test(url)) return;
+        requests.push({ url, method: request.method(), headers: request.headers() });
+      });
+
+      page.on("response", (response) => {
+        if (!response.ok()) return;
+        const type = response.headers()["content-type"] ?? "";
+        if (!type.includes("json")) return;
+        pending.push(
+          response
+            .json()
+            .then((body) => {
+              captured.push({ url: response.url(), body });
+            })
+            .catch(() => undefined),
+        );
+      });
+
+      const countOptions = async (): Promise<number> => {
+        const raw = await page.evaluate<string>(
+          `String(document.querySelectorAll('.cdk-overlay-container mat-option').length)`,
+        );
+        return Number(raw) || 0;
+      };
+
+      const closeOverlay = async (): Promise<void> => {
+        for (let i = 0; i < 5 && (await countOptions()) > 0; i += 1) {
+          await page.keyboard.press("Escape").catch(() => undefined);
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      };
+
+      /** Opens a dropdown and clicks the option containing every needle. */
+      const pickOption = async (
+        selectId: string,
+        needles: string[],
+        label: string,
+      ): Promise<boolean> => {
+        await closeOverlay();
+        await page.click(`#${selectId}`, { timeout: 8000 }).catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 900));
+
+        // The arrow icon is a text ligature inside the option, so strip it
+        // before matching or "Portsmouth -> Santander" never matches.
+        const script = `(function(){
+          var opts = Array.from(document.querySelectorAll('.cdk-overlay-container mat-option'));
+          if (opts.length === 0) return 'no-options';
+          var needles = ${JSON.stringify(needles.map((n) => n.toLowerCase()))};
+          var hit = opts.filter(function(o){
+            var t = (o.textContent||'').toLowerCase().replace(/arrow_right_alt/g,' ');
+            return needles.every(function(n){ return t.indexOf(n) !== -1; });
+          })[0];
+          if (!hit) return 'not-found|' + opts.length + '|' + opts.slice(0,6).map(function(o){
+            return (o.textContent||'').trim().slice(0,40);
+          }).join(' ; ');
+          hit.click();
+          return 'clicked|' + (hit.textContent||'').trim().slice(0,60);
+        })()`;
+
+        const result = await page.evaluate<string>(script).catch((e) => `error|${e}`);
+        await new Promise((r) => setTimeout(r, 700));
+        const ok = result.startsWith("clicked");
+        note(label, ok, result);
+        await closeOverlay();
+        return ok;
+      };
+
+      await page.goto(plan.bookingUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: options.timeoutMs,
+      });
+      note("goto", true, plan.bookingUrl);
+
+      for (const candidate of [plan.consentSelector, "#onetrust-accept-btn-handler"]) {
+        if (!candidate) continue;
+        const clicked = await page
+          .click(candidate, { timeout: 6000 })
+          .then(() => true)
+          .catch(() => false);
+        if (clicked) {
+          note("consent", true, candidate);
+          break;
+        }
+        note("consent", false, `no match: ${candidate}`);
+      }
+      await new Promise((r) => setTimeout(r, 1200));
+
+      // Report the trip-type radios rather than assuming which is one-way.
+      const radios = await page
+        .evaluate<string>(
+          `JSON.stringify(Array.from(document.querySelectorAll('mat-radio-button')).map(function(el){return (el.textContent||'').trim().slice(0,30);}))`,
+        )
+        .catch(() => "[]");
+      note("radio-labels", true, radios);
+
+      const oneWay = await page
+        .evaluate<string>(
+          `(function(){
+            var rs = Array.from(document.querySelectorAll('mat-radio-button'));
+            var hit = rs.filter(function(r){ return /one.?way|single/i.test(r.textContent||''); })[0];
+            if (!hit) return 'not-found';
+            var input = hit.querySelector('input');
+            (input || hit).click();
+            return 'clicked|' + (hit.textContent||'').trim().slice(0,30);
+          })()`,
+        )
+        .catch((e) => `error|${e}`);
+      note("one-way", oneWay.startsWith("clicked"), oneWay);
+      await new Promise((r) => setTimeout(r, 800));
+
+      await pickOption("mat-select-0", [plan.routeFrom, plan.routeTo], "route");
+
+      // The date format the field accepts is unknown, so try the plausible
+      // ones and keep whichever the control actually retains.
+      const [y, m, d] = plan.date.split("-");
+      const formats = [`${d}/${m}/${y}`, plan.date, `${d}-${m}-${y}`, `${d}.${m}.${y}`];
+      let dateSet = "none";
+      for (const value of formats) {
+        await page
+          .fill('[data-testid="outwardDate"]', value, { timeout: 6000 })
+          .catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 500));
+        const got = await page
+          .evaluate<string>(
+            `(document.querySelector('[data-testid="outwardDate"]')||{}).value || ''`,
+          )
+          .catch(() => "");
+        if (got.trim().length > 0) {
+          dateSet = `${value} -> field shows "${got}"`;
+          break;
+        }
+      }
+      note("date", dateSet !== "none", dateSet);
+
+      await pickOption("mat-select-6", ["pet"], "pets");
+
+      const submitted = await page
+        .click('[data-testid="submit"]', { timeout: 10000 })
+        .then(() => true)
+        .catch(() => false);
+      note("submit", submitted, submitted ? "clicked Search sailings" : "submit not clickable");
+
+      await page
+        .waitForLoadState("networkidle", { timeout: options.timeoutMs })
+        .catch(() => undefined);
+      await new Promise((r) => setTimeout(r, plan.settleMs));
+
+      // Step 3 is where cabins, and therefore pet cabins, are listed.
+      const toCabins = await page
+        .click('[data-testid="bf-stepper-header-cell-2"]', { timeout: 10000 })
+        .then(() => true)
+        .catch(() => false);
+      note("cabins-step", toCabins, toCabins ? "clicked CABINS & SEATS" : "step not reachable");
+      await new Promise((r) => setTimeout(r, plan.settleMs));
+
+      await Promise.all(pending);
+      const title = await page.title().catch(() => "");
+
+      return { steps, captured, requests, finalUrl: page.url(), title };
     },
 
     async pause(ms) {

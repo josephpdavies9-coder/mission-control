@@ -11,6 +11,7 @@ import { createMailer } from "./notify/index.js";
 import { renderAlert } from "./notify/template.js";
 import {
   calibrate,
+  driveSearch,
   inspectForm,
   probeCalibration,
   recordCalibration,
@@ -29,6 +30,7 @@ Usage:
                                      (--record to drive the site yourself)
   ferry-watch probe      [options]   Non-interactive calibration, for CI logs
   ferry-watch inspect    [options]   List the booking page's form controls
+  ferry-watch search     [options]   Drive a real booking search and record it
   ferry-watch test-email [options]   Send a sample alert to prove delivery works
 
 Options:
@@ -180,6 +182,18 @@ async function main(): Promise<number> {
 
     case "inspect": {
       await inspectForm(config, cli.startUrl ?? defaultStartUrl(config));
+      return 0;
+    }
+
+    case "search": {
+      const watch = config.watches[0];
+      if (!watch) throw new Error("No watches configured to search with.");
+      await driveSearch(
+        config,
+        watch,
+        "./calibration",
+        cli.startUrl ?? DEFAULT_BOOKING,
+      );
       return 0;
     }
 
