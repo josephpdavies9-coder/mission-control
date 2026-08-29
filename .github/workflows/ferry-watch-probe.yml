@@ -60,14 +60,39 @@ jobs:
           set -o pipefail
           pnpm exec tsx src/cli.ts check --dry-run 2>&1 | head -200
 
+      # Raw JSON truncated at a byte count answers nothing — the interesting
+      # part is never in the first 2 KB. These questions are: does the parser
+      # see the sailings, and is petCabinAvailable ever true? A sweep finding
+      # nothing is only trustworthy once the second answer is known.
       - name: Summarise captured payloads
         if: always()
         run: |
           for f in calibration/*.json; do
             [ -e "$f" ] || continue
             echo "=== $f ($(wc -c < "$f") bytes) ==="
-            head -c 2500 "$f"; echo; echo
+            jq -r '
+              "request ports: \(.request.departurePort) -> \(.request.arrivalPort)",
+              "request dates: \(.request.fromDate) .. \(.request.toDate)",
+              "response top-level keys: \(.response | if type=="object" then keys else type end)",
+              ( [ .response | .. | objects | select(has("petAvailabilities")) ] as $s
+                | "sailings with petAvailabilities: \($s | length)",
+                  "petCabinAvailable true: \([ $s[] | select(.petAvailabilities.petCabinAvailable == true) ] | length)",
+                  "petCabinAvailable false: \([ $s[] | select(.petAvailabilities.petCabinAvailable == false) ] | length)",
+                  "sailing field names: \($s[0] // {} | keys)",
+                  "petAvailabilities keys: \($s[0].petAvailabilities // {} | keys)"
+              )
+            ' "$f" || echo "jq failed on $f"
+            echo
           done
+
+          # One whole sailing object, so the field names the provider guesses
+          # at (shipName, departureDate, ticketTier) can be checked against
+          # what is actually there rather than assumed.
+          first=$(ls calibration/*prices*.json 2>/dev/null | head -1)
+          if [ -n "$first" ]; then
+            echo "=== one full sailing from $first ==="
+            jq -r '[ .response | .. | objects | select(has("petAvailabilities")) ][0]' "$first"
+          fi
 
       - name: Upload captured payloads
         if: always()
