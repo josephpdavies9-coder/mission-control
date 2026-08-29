@@ -208,6 +208,38 @@ stock, not ship capability.
 `petAvailabilities` object contains a key called `petAvailability`. A sailing
 is now identified by having *structured* pet availability, not by a key name.
 
+### /crossing/accommodations — verified end to end
+
+The request is accepted only when `departureDate` is the sailing's **exact
+departure instant, ISO with the trailing Z** — `"2027-05-10T20:45:00Z"`.
+Midnight on the day, the Z-stripped form, a bare date and the nested object
+were all rejected with 400 "Failed to read request". `ticketTier: "STANDARD"`
+was never the problem. Established by probing eighteen body variants in a
+single run rather than one per CI cycle.
+
+The response is `{ accommodationMandatory, accommodations, currency,
+discountType, globalExtras, petAccommodations }`. Brittany Ferries sell
+exactly two pet cabins:
+
+| Code | Description | Price |
+|------|-------------|-------|
+| `4E` | Inside 4 berth pet friendly cabin with ensuite facilities | £174 |
+| `4N` | Outside 4 berth pet friendly cabin with ensuite facilities | £194 |
+
+Each carries `quantityAvailable`, and it is genuinely per-sailing: `4N` showed
+0, 2 and 6 across three sailings in the same week.
+
+**The price is nested** under `unitCost: { amount, economy, discounted }`.
+There is no flat `price` field anywhere in the payload, so reading one
+returned null on every real cabin — an alert that omits the very price it went
+looking for.
+
+Pet cabins appear under `petAccommodations` and never duplicate into
+`accommodations`, so walking the whole payload finds each exactly once. The
+label filter still matters: `accommodations` holds ordinary cabins and every
+cabin carries an `extras` array (champagne, water, lounge access) with its own
+descriptions and stock, all of which walk past the same filter.
+
 ### Current state of the route (29 Aug 2026)
 
 Across all three UK→Spain crossings and the full 25 Sep – 7 Oct 2026 window:

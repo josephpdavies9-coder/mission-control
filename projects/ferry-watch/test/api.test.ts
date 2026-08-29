@@ -139,3 +139,63 @@ describe("live payload shape", () => {
     expect(petCabinAvailable(returned)).toBe(true);
   });
 });
+
+// Captured from a live /crossing/accommodations response. The two pet cabins
+// the operator sells are codes 4E (inside) and 4N (outside), and the price is
+// nested under unitCost — there is no flat price field anywhere in the payload.
+const LIVE_ACCOMMODATIONS = {
+  accommodationMandatory: true,
+  currency: "GBP",
+  accommodations: [
+    {
+      code: "4B",
+      description: "Inside 4 berth cabin with ensuite facilities",
+      unitCost: { amount: 154, economy: 0, discounted: false },
+      quantityAvailable: 8,
+    },
+  ],
+  petAccommodations: [
+    {
+      code: "4E",
+      description: "Inside 4 berth pet friendly cabin with ensuite facilities",
+      unitCost: { amount: 174, economy: 0, discounted: false },
+      quantityAvailable: 5,
+      extras: [
+        {
+          code: "BOTTLE_OF_WATER",
+          description: "Water in cabin",
+          unitCost: { amount: 5.5, economy: 0, discounted: false },
+          quantityAvailable: 10,
+        },
+      ],
+    },
+    {
+      code: "4N",
+      description: "Outside 4 berth pet friendly cabin with ensuite facilities",
+      unitCost: { amount: 194, economy: 0, discounted: false },
+      quantityAvailable: 0,
+    },
+  ],
+};
+
+describe("live accommodations shape", () => {
+  const found = petCabinsFrom(LIVE_ACCOMMODATIONS);
+
+  it("keeps only the pet cabin that has stock", () => {
+    expect(found).toHaveLength(1);
+    expect(found[0]?.code).toBe("4E");
+    expect(found[0]?.remaining).toBe(5);
+  });
+
+  it("reads the price out of unitCost", () => {
+    // £174, in pence. A flat `price` lookup returned null here.
+    expect(found[0]?.price).toBe(17_400);
+  });
+
+  it("ignores the ordinary cabin and the in-cabin extras", () => {
+    // "Water in cabin" is a nested extra with stock, and the 4B cabin is
+    // simply not pet friendly. Both walk past the same filter.
+    expect(found.map((o) => o.label)).not.toContain("Water in cabin");
+    expect(found.map((o) => o.code)).not.toContain("4B");
+  });
+});

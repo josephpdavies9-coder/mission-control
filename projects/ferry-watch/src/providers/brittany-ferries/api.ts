@@ -188,7 +188,12 @@ export function petCabinsFrom(payload: unknown): PetOption[] {
     const description = String(record.description ?? record.name ?? "");
     const quantity = Number(record.quantityAvailable ?? record.quantity ?? 0);
     if (PET_CABIN.test(description) && quantity > 0) {
-      const price = Number(record.price ?? record.totalPrice ?? NaN);
+      // The price is nested: unitCost: { amount, economy, discounted }. There
+      // is no flat `price` field, so reading one gave null on every real
+      // cabin — an alert that omits the price it went looking for.
+      const price = Number(
+        asRecord(record.unitCost)?.amount ?? record.price ?? record.totalPrice ?? NaN,
+      );
       options.push({
         code: String(record.code ?? record.accommodationCode ?? description),
         label: description,
