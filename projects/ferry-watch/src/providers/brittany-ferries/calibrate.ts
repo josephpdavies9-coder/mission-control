@@ -332,6 +332,22 @@ export async function inspectForm(
     const visible = controls.filter((control) => control.visible);
     console.log(`${controls.length} controls, ${visible.length} visible.\n`);
 
+    const selects = await session.enumerateSelects(url, selectors.consentSelector);
+    if (selects.length > 0) {
+      console.log("Dropdowns and their options:\n");
+      for (const select of selects) {
+        console.log(`  #${select.id}  ${select.testId}  label="${select.label}"`);
+        for (const option of select.options.slice(0, 25)) {
+          console.log(`      - ${option}`);
+        }
+        if (select.options.length > 25) {
+          console.log(`      ... ${select.options.length - 25} more`);
+        }
+        if (select.options.length === 0) console.log("      (no options rendered)");
+      }
+      console.log();
+    }
+
     for (const control of visible) {
       const parts = [
         control.tag + (control.type ? `[${control.type}]` : ""),

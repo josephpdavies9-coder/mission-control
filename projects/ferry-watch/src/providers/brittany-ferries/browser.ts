@@ -16,6 +16,14 @@ export interface CapturedRequest {
   headers: Record<string, string>;
 }
 
+/** A dropdown and the options it offers, for working out what to pick. */
+export interface SelectInfo {
+  id: string;
+  testId: string;
+  label: string;
+  options: string[];
+}
+
 /** One interactive control on a page, for working out how to drive a form. */
 export interface ControlInfo {
   tag: string;
@@ -67,6 +75,8 @@ export interface BrowserSession {
   record(startUrl: string, stop: () => Promise<void>): Promise<RecordResult>;
   /** Lists the interactive controls on a page, to work out how to drive it. */
   inspect(url: string, consentSelector: string): Promise<ControlInfo[]>;
+  /** Opens each dropdown in turn and reports the options it offers. */
+  enumerateSelects(url: string, consentSelector: string): Promise<SelectInfo[]>;
   pause(ms: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -287,6 +297,72 @@ export async function launchBrowser(
       } catch {
         return [];
       }
+    },
+
+    async enumerateSelects(url, consentSelector) {
+      const page = await context.newPage();
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: options.timeoutMs,
+      });
+      if (consentSelector) {
+        await page.click(consentSelector, { timeout: 8000 }).catch(() => undefined);
+      }
+      await page
+        .waitForLoadState("networkidle", { timeout: options.timeoutMs })
+        .catch(() => undefined);
+
+      const idsJson = await page.evaluate<string>(`
+        JSON.stringify(
+          Array.from(document.querySelectorAll('mat-select')).map(function (el) {
+            var field = el.closest('mat-form-field');
+            return {
+              id: el.id || '',
+              testId: el.getAttribute('data-testid') || '',
+              label: field ? (field.textContent || '').trim().slice(0, 60) : ''
+            };
+          })
+        )
+      `);
+
+      let selects: { id: string; testId: string; label: string }[] = [];
+      try {
+        selects = JSON.parse(idsJson);
+      } catch {
+        return [];
+      }
+
+      const results: SelectInfo[] = [];
+      for (const select of selects) {
+        if (!select.id) continue;
+        // A mat-select only renders its options once opened, into an overlay
+        // elsewhere in the DOM, so each one has to be clicked in turn.
+        await page.click(`#${select.id}`, { timeout: 8000 }).catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, 700));
+
+        const optionsJson = await page.evaluate<string>(`
+          JSON.stringify(
+            Array.from(document.querySelectorAll('.cdk-overlay-container mat-option'))
+              .map(function (el) { return (el.textContent || '').trim().slice(0, 70); })
+          )
+        `);
+
+        let optionTexts: string[] = [];
+        try {
+          optionTexts = JSON.parse(optionsJson);
+        } catch {
+          optionTexts = [];
+        }
+        results.push({ ...select, options: optionTexts });
+
+        // Close the overlay before opening the next one.
+        await page
+          .click(".cdk-overlay-backdrop", { timeout: 3000 })
+          .catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      return results;
     },
 
     async pause(ms) {
