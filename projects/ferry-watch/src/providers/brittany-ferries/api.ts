@@ -225,6 +225,7 @@ export async function fetchPrices(
 
 export async function fetchAccommodations(
   watch: Watch,
+  /** The sailing's exact departure instant, ISO with Z. Nothing else parses. */
   departureDate: string,
   shipName: string,
   ticketTier: string,
@@ -321,8 +322,13 @@ export async function readAvailability(
       if (shipName) {
         try {
           const tier = pick(candidate, ["ticketTier", "tier", "fareTier"]) || "STANDARD";
+          // departureDate must be the sailing's exact departure instant, ISO
+          // with the trailing Z — "2027-05-10T20:45:00Z". Established by
+          // probing eighteen body variants against the live endpoint: that
+          // one was accepted and every other form of the date was rejected,
+          // midnight and Z-stripped included.
           petOptions = petCabinsFrom(
-            await fetchAccommodations(watch, departure.date, shipName, tier),
+            await fetchAccommodations(watch, departure.iso, shipName, tier),
           );
         } catch (error) {
           log(`  accommodations lookup failed: ${(error as Error).message}`);

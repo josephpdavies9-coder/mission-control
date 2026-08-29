@@ -98,7 +98,29 @@ jobs:
       - name: Summarise captured payloads
         if: always()
         run: |
-          for f in calibration/*.json; do
+          # Accommodation payloads have a different shape and are the thing
+          # least understood, so they get their own summary rather than being
+          # forced through the sailing one.
+          for f in calibration/*accommodations*.json; do
+            [ -e "$f" ] || continue
+            echo "=== $f ($(wc -c < "$f") bytes) ==="
+            jq -r '
+              "request departureDate: \(.request.departureDate)",
+              "request ship/tier: \(.request.shipName) / \(.request.ticketTier)",
+              "response top-level keys: \(.response | if type=="object" then keys else type end)",
+              ( [ .response | .. | objects
+                  | select(has("quantityAvailable") or has("description") or has("name")) ] as $a
+                | "candidate accommodation objects: \($a | length)",
+                  "their field names: \([ $a[] | keys ] | add | unique)",
+                  "labels seen: \([ $a[] | (.description // .name // empty) ] | unique)",
+                  "pet-cabin-looking labels: \([ $a[]
+                       | select((.description // .name // "") | test("pet"; "i")) ])"
+              )
+            ' "$f" || echo "jq failed on $f"
+            echo
+          done
+
+          for f in calibration/*prices*.json; do
             [ -e "$f" ] || continue
             echo "=== $f ($(wc -c < "$f") bytes) ==="
             jq -r '
