@@ -61,53 +61,52 @@ jobs:
             echo
           done
 
-      # /crossing is the only endpoint that answered anything but 404 — a 500
-      # means it exists and wants parameters. Find out which.
-      - name: Interrogate the crossing endpoint
+      # dog.boats solved this exact problem before dropping its alerts. Its
+      # front-end code is public, served to any browser, so how it reads
+      # availability is directly observable rather than guesswork.
+      - name: How does dog.boats do it?
         continue-on-error: true
         env:
           UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          BASE: "https://www.brittany-ferries.co.uk/api/bebop/v1"
         run: |
-          show() {
-            printf '\n--- %s\n' "$1"
-            code=$(curl -sS -o /tmp/o -w '%{http_code}' -m 25 \
-              -H "User-Agent: $UA" -H 'Accept: application/json' "$1" || echo 000)
-            echo "status: $code"
-            head -c 900 /tmp/o
+          mkdir -p /tmp/dogboats
+          echo "=== landing page ==="
+          curl -sS -m 30 -L -H "User-Agent: $UA" https://www.dog.boats/ \
+            -o /tmp/dogboats/index.html -w 'status: %{http_code}  size: %{size_download}\n'
+
+          echo
+          echo "=== page text (tags stripped) ==="
+          sed 's/<[^>]*>/ /g' /tmp/dogboats/index.html | tr -s ' \n' ' \n' | head -60
+
+          echo
+          echo "=== referenced scripts and endpoints ==="
+          grep -oE '(src|href)="[^"]+"' /tmp/dogboats/index.html | sort -u | head -40
+
+          echo
+          echo "=== does the page itself mention the operator or an API? ==="
+          grep -oiE '(bebop|brittany[-a-z]*|crossing|availability|api/[a-z0-9/._-]*|fetch\(|firebase|supabase|amazonaws|workers\.dev)' \
+            /tmp/dogboats/index.html | sort | uniq -c | sort -rn | head -30
+
+          echo
+          echo "=== fetch each script and look inside ==="
+          grep -oE 'src="[^"]+\.js[^"]*"' /tmp/dogboats/index.html \
+            | sed 's/src="//; s/"$//' | sort -u | head -12 | while read -r js; do
+            case "$js" in
+              http*) url="$js" ;;
+              /*)    url="https://www.dog.boats$js" ;;
+              *)     url="https://www.dog.boats/$js" ;;
+            esac
             echo
-          }
-
-          echo "=== bare call, to see what it complains about ==="
-          show "$BASE/crossing"
-
-          echo
-          echo "=== parameter-name guesses (Portsmouth -> Santander, 2026-09-25) ==="
-          show "$BASE/crossing?departurePort=GBPME&arrivalPort=ESSDR&departureDate=2026-09-25"
-          show "$BASE/crossing?departurePortCode=GBPME&arrivalPortCode=ESSDR&departureDate=2026-09-25"
-          show "$BASE/crossing?departure=GBPME&arrival=ESSDR&date=2026-09-25"
-          show "$BASE/crossing?from=GBPME&to=ESSDR&date=2026-09-25"
-          show "$BASE/crossing?origin=GBPME&destination=ESSDR&departureDate=2026-09-25"
-          show "$BASE/crossing?departurePort=GBPME&arrivalPort=ESSDR&outboundDate=2026-09-25"
-
-          echo
-          echo "=== sibling endpoints under the same base ==="
-          for ep in crossing/search crossings/search crossing/availability \
-                    offer offers booking basket journey journeys trip; do
-            code=$(curl -sS -o /tmp/o -w '%{http_code}' -m 20 \
-              -H "User-Agent: $UA" -H 'Accept: application/json' "$BASE/$ep" || echo 000)
-            printf '%-24s %s\n' "$ep" "$code"
-            if [ "$code" != "404" ]; then head -c 400 /tmp/o | sed 's/^/    /'; echo; fi
+            echo "--- $url"
+            curl -sS -m 30 -L -H "User-Agent: $UA" "$url" -o /tmp/dogboats/bundle.js \
+              -w '    status: %{http_code}  size: %{size_download}\n'
+            echo "    interesting strings:"
+            grep -oiE '(https?://[a-z0-9._/-]*(brittany|bebop|dog\.boats|workers\.dev|firebase|supabase|amazonaws)[a-z0-9._/?=&-]*)' \
+              /tmp/dogboats/bundle.js | sort -u | head -20 | sed 's/^/      /'
+            grep -oiE '"(/api/[a-z0-9/._-]+)"' /tmp/dogboats/bundle.js | sort -u | head -20 | sed 's/^/      /'
+            grep -oiE '(departurePort|arrivalPort|departureDate|routeCode|offerCode|tariff|petCabin|pet_cabin|accommodationCode)[A-Za-z]*' \
+              /tmp/dogboats/bundle.js | sort -u | head -20 | sed 's/^/      /'
           done
-
-          echo
-          echo "=== does it want a POST? ==="
-          curl -sS -o /tmp/o -w 'POST status: %{http_code}\n' -m 25 -X POST \
-            -H "User-Agent: $UA" -H 'Content-Type: application/json' \
-            -d '{"departurePort":"GBPME","arrivalPort":"ESSDR","departureDate":"2026-09-25"}' \
-            "$BASE/crossing" || true
-          head -c 900 /tmp/o
-          echo
 
       - name: Prepare config
         run: cp ferry-watch.config.example.json ferry-watch.config.json
