@@ -240,6 +240,18 @@ label filter still matters: `accommodations` holds ordinary cabins and every
 cabin carries an `extras` array (champagne, water, lounge access) with its own
 descriptions and stock, all of which walk past the same filter.
 
+### Cabins only — kennels are not a substitute
+
+Joe's requirement, and worth recording because the API makes the wrong thing
+easy. `petAvailabilities` carries five flags, and on a sold-out sailing four of
+them can be true while `petCabinAvailable` is false: kennels, small kennels,
+stay-in-car and the catch-all `petAvailability`. Treating "some pet space" as a
+hit would fire constantly and never mean anything.
+
+Only `petCabinAvailable` counts, and only a `/pet friendly cabin/i` label with
+`quantityAvailable > 0` survives the accommodations filter. A named regression
+test covers both, since this is the rule most likely to be relaxed by accident.
+
 ### Current state of the route (29 Aug 2026)
 
 Across all three UK→Spain crossings and the full 25 Sep – 7 Oct 2026 window:

@@ -199,3 +199,47 @@ describe("live accommodations shape", () => {
     expect(found.map((o) => o.code)).not.toContain("4B");
   });
 });
+
+// Joe's requirement, stated explicitly: cabins only, kennels are not an
+// acceptable substitute. This is a regression guard, not a restatement of the
+// tests above — it is the one rule most likely to be relaxed by accident,
+// because the operator reports kennel space on the very same call and it is
+// tempting to treat "some pet space" as a hit.
+describe("kennels never produce an alert", () => {
+  const KENNELS_BUT_NO_CABIN = {
+    ...LIVE_SAILING,
+    petAvailabilities: {
+      kennelAvailable: true,
+      smallKennelAvailable: true,
+      petCabinAvailable: false,
+      stayInCarAvailable: true,
+      petAvailability: true,
+    },
+  };
+
+  it("ignores a sailing offering only kennels, a car space and pet passage", () => {
+    // Four of the five flags are true here. Only petCabinAvailable counts.
+    expect(petCabinAvailable(KENNELS_BUT_NO_CABIN)).toBe(false);
+  });
+
+  it("never lifts a kennel out of an accommodations payload", () => {
+    const withKennels = {
+      currency: "GBP",
+      petAccommodations: [
+        {
+          code: "KEN",
+          description: "Kennel on pet deck",
+          unitCost: { amount: 35, economy: 0, discounted: false },
+          quantityAvailable: 12,
+        },
+        {
+          code: "KENS",
+          description: "Small kennel",
+          unitCost: { amount: 25, economy: 0, discounted: false },
+          quantityAvailable: 8,
+        },
+      ],
+    };
+    expect(petCabinsFrom(withKennels)).toEqual([]);
+  });
+});
