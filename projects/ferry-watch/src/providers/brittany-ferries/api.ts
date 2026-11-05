@@ -299,10 +299,24 @@ export async function readAvailability(
   const sailings: Sailing[] = [];
 
   for (const window of dateWindows(watch.dateFrom, watch.dateTo)) {
-    log(`  prices ${window.fromDate.slice(0, 10)} to ${window.toDate.slice(0, 10)}`);
     const prices = await fetchPrices(watch, window);
+    const candidates = extractCandidates(prices);
+    const flagged = candidates.filter(petCabinAvailable).length;
 
-    for (const candidate of extractCandidates(prices)) {
+    // "0 sailings" and "sailings but no pet cabin" are completely different
+    // situations and both used to print the same line. The first means the
+    // route does not run in this window at all — Plymouth–Santander is
+    // seasonal and returns nothing in December — so waiting for an alert on
+    // it is waiting for something that cannot arrive. The second is the
+    // cancellation watch doing its job.
+    log(
+      `  prices ${window.fromDate.slice(0, 10)} to ${window.toDate.slice(0, 10)}: ` +
+        (candidates.length === 0
+          ? "no sailings on this route in this window"
+          : `${candidates.length} sailing(s), ${flagged} with a pet cabin`),
+    );
+
+    for (const candidate of candidates) {
       if (!petCabinAvailable(candidate)) continue;
 
       const departure = pickDateTime(candidate, [
