@@ -252,19 +252,23 @@ Only `petCabinAvailable` counts, and only a `/pet friendly cabin/i` label with
 `quantityAvailable > 0` survives the accommodations filter. A named regression
 test covers both, since this is the rule most likely to be relaxed by accident.
 
-### Current state of the route (29 Aug 2026)
+### Observed state, 29 Aug 2026 (historical — that window has passed)
 
-Across all three UK→Spain crossings and the full 25 Sep – 7 Oct 2026 window:
-**every sailing reports `petCabinAvailable: false`.** Kennels are available on
-several; pet cabins on none. So "0 matching" is a true reading, not a parser
-failure — and it is exactly the state the watcher exists to see change.
+Across all three UK→Spain crossings and the whole 25 Sep – 7 Oct 2026 window,
+**every sailing reported `petCabinAvailable: false`.** Kennels were available
+on several; pet cabins on none. "0 matching" was a true reading, not a parser
+failure — which is what made it worth recording.
 
-One consequence worth stating plainly: because nothing has ever been flagged,
-`/crossing/accommodations` **has never actually run**. Its request shape came
-from a paste and its response shape is unverified. That is why the second call
-is treated as enrichment rather than a gate — a flagged sailing is reported
-whether or not that call succeeds. Getting less detail in an alert is a small
-cost; missing the alert entirely is not.
+The watch window is now 9–16 Dec 2026. Take nothing here as current
+availability; it is kept as the evidence behind the parser decisions above.
+
+At the time that reading was taken, `/crossing/accommodations` had never
+actually run, because nothing had ever been flagged. That is the origin of the
+rule that the second call is enrichment rather than a gate: a flagged sailing
+is reported whether or not it succeeds. One run later that call returned 400
+on every attempt while twelve real pet cabins were on sale, so as a gate it
+would have reported nothing. Getting less detail in an alert is a small cost;
+missing the alert entirely is not.
 
 ### Practical limits
 

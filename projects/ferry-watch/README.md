@@ -53,10 +53,10 @@ Then run it for real. No calibration step — the API needs none:
 
 ```bash
 # One sweep over a specific window, printing the email instead of sending it
-pnpm exec tsx src/cli.ts check --from 2026-09-25 --to 2026-10-07 --dry-run
+pnpm exec tsx src/cli.ts check --from 2026-12-09 --to 2026-12-16 --dry-run
 
 # Or leave it watching that window
-pnpm exec tsx src/cli.ts watch --from 2026-09-25 --to 2026-10-07
+pnpm exec tsx src/cli.ts watch --from 2026-12-09 --to 2026-12-16
 ```
 
 `--from` / `--to` override the dates in every watch, so a one-off search never
@@ -174,7 +174,7 @@ Cron, every 30 minutes:
 ```cron
 */30 * * * * cd ~/mission-control/projects/ferry-watch && \
   FERRY_WATCH_SMTP_PASSWORD='...' /usr/local/bin/pnpm exec tsx src/cli.ts check --quiet \
-  --from 2026-09-25 --to 2026-10-07 >> ~/.ferry-watch.log 2>&1
+  --from 2026-12-09 --to 2026-12-16 >> ~/.ferry-watch.log 2>&1
 ```
 
 On macOS, `launchd` survives reboots more reliably — or simply leave
