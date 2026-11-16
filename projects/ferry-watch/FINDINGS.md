@@ -270,6 +270,40 @@ on every attempt while twelve real pet cabins were on sale, so as a gate it
 would have reported nothing. Getting less detail in an alert is a small cost;
 missing the alert entirely is not.
 
+### Observed state, 16 Nov 2026 — the 5-20 Dec window
+
+Four sailings in the whole sixteen-day window, both enabled routes combined:
+
+| Route | Sailing | Pet flags |
+|---|---|---|
+| Portsmouth→Santander | 10 Dec, *Santona* | all five false |
+| Portsmouth→Santander | 12–18 Dec | `petCabinAvailable` false |
+| Portsmouth→Bilbao | 8 Dec, *Galicia* | all five false |
+| Portsmouth→Bilbao | 15 Dec, *Galicia* | all five false |
+
+19–20 December has no crossings on either route. Plymouth→Santander has none
+in December at all, which is why that watch is disabled.
+
+**The flags differ from September in a way that matters.** In September the
+sold-out sailings showed `kennelAvailable: true` beside
+`petCabinAvailable: false` — pets were being carried, a cabin was merely sold
+out, and a cancellation could free one. Here every flag is false, including
+the catch-all `petAvailability`, on two different ships five weeks out. That
+is not the signature of a straightforward sell-out.
+
+Two readings fit, and the API alone cannot separate them:
+
+- pet carriage is not sold on these winter crossings, in which case no
+  cancellation will ever produce a pet cabin and watching is futile;
+- every form of pet space is sold out, kennels included, in which case
+  watching is exactly right.
+
+`isPetAllowed: true` on each sailing leans towards the second, but it appears
+to describe the route rather than current stock. Settling it needs the booking
+site or a phone call to the operator, not another API read — worth recording
+because the watcher cannot tell the user which of the two it is, and will look
+identical in both cases.
+
 ### Practical limits
 
 Date windows are requested seven days at a time and paced 800ms apart, with
