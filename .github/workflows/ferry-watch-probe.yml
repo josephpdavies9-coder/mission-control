@@ -132,7 +132,13 @@ jobs:
                   "petCabinAvailable true: \([ $s[] | select(.petAvailabilities.petCabinAvailable == true) ] | length)",
                   "petCabinAvailable false: \([ $s[] | select(.petAvailabilities.petCabinAvailable == false) ] | length)",
                   "sailing field names: \($s[0] // {} | keys)",
-                  "petAvailabilities keys: \($s[0].petAvailabilities // {} | keys)"
+                  "petAvailabilities keys: \($s[0].petAvailabilities // {} | keys)",
+                  # Every flag on every sailing, not just the cabin one. "Cabin
+                  # sold out but kennels running" and "pets not carried on this
+                  # crossing at all" both read as petCabinAvailable false, and
+                  # they mean opposite things: the first can free up through a
+                  # cancellation, the second never will.
+                  "pet flags per sailing: \([ $s[] | { d: .departureDateTime.date, ship: .shipName, pets: .petAvailabilities } ])"
               )
             ' "$f" || echo "jq failed on $f"
             echo
