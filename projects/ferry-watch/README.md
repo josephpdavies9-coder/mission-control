@@ -35,8 +35,11 @@ cp ferry-watch.config.example.json ferry-watch.config.json
 $EDITOR ferry-watch.config.json           # set your email address
 ```
 
-The shipped config watches all three **UK → Spain** crossings:
-Portsmouth→Santander, Portsmouth→Bilbao and Plymouth→Santander.
+The shipped config watches the **UK → Spain** crossings that run in the
+configured window: Portsmouth→Santander and Portsmouth→Bilbao.
+Plymouth→Santander is present but **disabled**, because the operator returns
+no December crossings on it at all — that route is seasonal. Re-enable it for
+a window when it sails.
 
 Prove the plumbing before pointing it at the real site:
 
@@ -53,10 +56,10 @@ Then run it for real. No calibration step — the API needs none:
 
 ```bash
 # One sweep over a specific window, printing the email instead of sending it
-pnpm exec tsx src/cli.ts check --from 2026-12-09 --to 2026-12-16 --dry-run
+pnpm exec tsx src/cli.ts check --from 2026-12-05 --to 2026-12-20 --dry-run
 
 # Or leave it watching that window
-pnpm exec tsx src/cli.ts watch --from 2026-12-09 --to 2026-12-16
+pnpm exec tsx src/cli.ts watch --from 2026-12-05 --to 2026-12-20
 ```
 
 `--from` / `--to` override the dates in every watch, so a one-off search never
@@ -174,7 +177,7 @@ Cron, every 30 minutes:
 ```cron
 */30 * * * * cd ~/mission-control/projects/ferry-watch && \
   FERRY_WATCH_SMTP_PASSWORD='...' /usr/local/bin/pnpm exec tsx src/cli.ts check --quiet \
-  --from 2026-12-09 --to 2026-12-16 >> ~/.ferry-watch.log 2>&1
+  --from 2026-12-05 --to 2026-12-20 >> ~/.ferry-watch.log 2>&1
 ```
 
 On macOS, `launchd` survives reboots more reliably — or simply leave
