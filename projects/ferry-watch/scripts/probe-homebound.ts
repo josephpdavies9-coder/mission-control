@@ -153,3 +153,59 @@ for (const from of spanish) {
     out(`${from} -> ${to}: ${summary}${notes.length ? `  [${notes.join("; ")}]` : ""}`);
   }
 }
+
+// --- Step three: is "no sailings" real, or is `direction` wrong? ---
+//
+// The outbound leg (Portsmouth -> Santander) returns sailings on these very
+// dates, and the ship has to come back, so "no sailings" for the return leg
+// is suspicious rather than credible. The likeliest cause is `direction`:
+// every request above sends "outbound", which may be meaningless on a
+// Spain-departure query. A wrong value here returns an empty list that is
+// indistinguishable from a route that does not run — the same trap as a
+// guessed port code. So test the alternatives rather than believe the zero.
+out("\n--- direction variants on the return leg, 5-11 Dec ---");
+
+const directionVariants: { label: string; value: string | null | undefined }[] = [
+  { label: '"outbound" (what the monitor sends)', value: "outbound" },
+  { label: '"inbound"', value: "inbound" },
+  { label: '"return"', value: "return" },
+  { label: "omitted entirely", value: undefined },
+  { label: "null", value: null },
+];
+
+for (const from of spanish) {
+  for (const to of british) {
+    for (const variant of directionVariants) {
+      const body: Record<string, unknown> = {
+        bookingReference: null,
+        pets: { smallDogs: 1, largeDogs: 0, cats: 0 },
+        passengers: { adults: 2, children: 0, infants: 0 },
+        vehicle: {
+          type: "CAR",
+          registrations: ["TBC"],
+          height: 183,
+          length: 500,
+          extras: { rearMountedBikeCarrier: null },
+        },
+        departurePort: from,
+        arrivalPort: to,
+        disability: null,
+        fromDate: "2026-12-05T00:00:00",
+        toDate: "2026-12-11T23:59:59",
+      };
+      if (variant.value !== undefined) body.direction = variant.value;
+
+      const { status, json, text } = await post("/crossing/prices", body);
+      const crossings = asRecord(json)?.crossings;
+      const count = Array.isArray(crossings) ? crossings.length : -1;
+      const detail =
+        status !== 200
+          ? `HTTP ${status} ${text.slice(0, 90)}`
+          : count < 0
+            ? "200 but no crossings array"
+            : `${count} sailing(s)`;
+      out(`${from} -> ${to}  direction ${variant.label}: ${detail}`);
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+}
