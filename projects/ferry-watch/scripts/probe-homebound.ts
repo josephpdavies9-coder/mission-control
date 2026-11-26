@@ -104,9 +104,11 @@ out(`\nTesting ${spanish.length} x ${destinations.length} crossings out of Spain
 
 for (const from of spanish) {
   for (const to of destinations) {
+    let crossings_total = 0;
     let sailings = 0;
     let petCabins = 0;
     let anyPetSpace = 0;
+    let errored = 0;
     const notes: string[] = [];
 
     for (const window of WINDOWS) {
@@ -130,15 +132,22 @@ for (const from of spanish) {
       });
 
       if (status !== 200) {
-        notes.push(`HTTP ${status} ${text.slice(0, 80)}`);
+        errored += 1;
+        notes.push(`HTTP ${status} ${text.slice(0, 80).replace(/\s+/g, " ")}`);
         continue;
       }
       const crossings = asRecord(json)?.crossings;
       if (!Array.isArray(crossings)) continue;
+      crossings_total += crossings.length;
       for (const crossing of crossings) {
         const record = asRecord(crossing);
-        const pets = asRecord(record?.petAvailabilities);
-        if (!record || !pets) continue;
+        if (!record) continue;
+        // Counted separately: a crossing can exist with no petAvailabilities
+        // block at all, which is not the same as one that has the block with
+        // every flag false. Folding them together is what made an earlier run
+        // report "no sailings" for a route that has two.
+        const pets = asRecord(record.petAvailabilities);
+        if (!pets) continue;
         sailings += 1;
         if (pets.petCabinAvailable === true) petCabins += 1;
         if (Object.values(pets).some((flag) => flag === true)) anyPetSpace += 1;
@@ -146,10 +155,13 @@ for (const from of spanish) {
       await new Promise((r) => setTimeout(r, 800));
     }
 
+    // Never let an error or a missing pet block masquerade as "no sailings".
     const summary =
-      sailings === 0
-        ? "no sailings in the window"
-        : `${sailings} sailing(s), ${petCabins} with a pet cabin, ${anyPetSpace} with any pet space`;
+      crossings_total === 0 && errored === WINDOWS.length
+        ? `every window errored — nothing learned`
+        : `${crossings_total} crossing(s); ${sailings} carry pet availability, ` +
+          `${petCabins} with a pet cabin, ${anyPetSpace} with any pet space` +
+          (errored > 0 ? `; ${errored}/${WINDOWS.length} window(s) errored` : "");
     out(`${from} -> ${to}: ${summary}${notes.length ? `  [${notes.join("; ")}]` : ""}`);
   }
 }
@@ -208,4 +220,37 @@ for (const from of spanish) {
       await new Promise((r) => setTimeout(r, 800));
     }
   }
+}
+
+// --- Step four: what a return-leg crossing actually contains ---
+//
+// Santander to Portsmouth has crossings in the window but none of them was
+// counted, which means the payload carries no petAvailabilities block at all
+// on that leg — a different thing from the block being present with every
+// flag false. Print one whole crossing so that is a fact rather than an
+// inference.
+out("\n--- one whole Santander -> Portsmouth crossing, 5-11 Dec ---");
+const returnLeg = await post("/crossing/prices", {
+  bookingReference: null,
+  pets: { smallDogs: 1, largeDogs: 0, cats: 0 },
+  passengers: { adults: 2, children: 0, infants: 0 },
+  vehicle: {
+    type: "CAR",
+    registrations: ["TBC"],
+    height: 183,
+    length: 500,
+    extras: { rearMountedBikeCarrier: null },
+  },
+  departurePort: "ESSDR",
+  arrivalPort: "GBPME",
+  disability: null,
+  direction: "outbound",
+  fromDate: "2026-12-05T00:00:00",
+  toDate: "2026-12-11T23:59:59",
+});
+if (returnLeg.status !== 200) {
+  out(`HTTP ${returnLeg.status}: ${returnLeg.text.slice(0, 200)}`);
+} else {
+  const crossings = asRecord(returnLeg.json)?.crossings;
+  out(JSON.stringify(Array.isArray(crossings) ? crossings : returnLeg.json, null, 2).slice(0, 4000));
 }
