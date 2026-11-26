@@ -75,6 +75,7 @@ jobs:
       # with a window far enough ahead to still have stock is the only way to
       # exercise the second half of the sequence.
       - name: Run a live check
+        if: ${{ !inputs.probeHomebound }}
         env:
           FERRY_WATCH_DUMP_DIR: ./calibration
           DATE_FROM: ${{ github.event.inputs.dateFrom }}
@@ -110,7 +111,7 @@ jobs:
         run: pnpm exec tsx scripts/probe-homebound.ts
 
       - name: Summarise captured payloads
-        if: always()
+        if: ${{ always() && !inputs.probeHomebound }}
         run: |
           # Accommodation payloads have a different shape and are the thing
           # least understood, so they get their own summary rather than being
