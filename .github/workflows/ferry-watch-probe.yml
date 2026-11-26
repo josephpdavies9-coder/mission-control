@@ -119,6 +119,10 @@ jobs:
         if: inputs.probeHomebound
         run: pnpm exec tsx scripts/probe-irish-site.ts
 
+      - name: Check Spain-to-Ireland crossings
+        if: inputs.probeHomebound
+        run: pnpm exec tsx scripts/probe-ireland-routes.ts
+
       - name: Summarise captured payloads
         if: ${{ always() && !inputs.probeHomebound }}
         run: |
