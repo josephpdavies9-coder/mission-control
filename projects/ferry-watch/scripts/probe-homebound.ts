@@ -12,6 +12,8 @@
  * Run: pnpm exec tsx scripts/probe-homebound.ts
  */
 
+import { extractCandidates, petCabinAvailable } from "../src/providers/brittany-ferries/api.js";
+
 const BASE = "https://www.brittany-ferries.co.uk/api/bebop/v1";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
@@ -138,19 +140,18 @@ for (const from of spanish) {
       }
       const crossings = asRecord(json)?.crossings;
       if (!Array.isArray(crossings)) continue;
+      // crossings is a list of DATE BUCKETS, not sailings: the sailing sits at
+      // crossings[].prices[].crossingPrices. Counting the buckets and looking
+      // for petAvailabilities on them found nothing and reported "no sailings"
+      // for a route that has six. So the extraction is no longer hand-rolled
+      // here — extractCandidates walks the payload whatever its depth and is
+      // covered by the provider's own tests.
       crossings_total += crossings.length;
-      for (const crossing of crossings) {
-        const record = asRecord(crossing);
-        if (!record) continue;
-        // Counted separately: a crossing can exist with no petAvailabilities
-        // block at all, which is not the same as one that has the block with
-        // every flag false. Folding them together is what made an earlier run
-        // report "no sailings" for a route that has two.
-        const pets = asRecord(record.petAvailabilities);
-        if (!pets) continue;
+      for (const sailing of extractCandidates(json)) {
         sailings += 1;
-        if (pets.petCabinAvailable === true) petCabins += 1;
-        if (Object.values(pets).some((flag) => flag === true)) anyPetSpace += 1;
+        if (petCabinAvailable(sailing)) petCabins += 1;
+        const pets = asRecord(sailing.petAvailabilities);
+        if (pets && Object.values(pets).some((flag) => flag === true)) anyPetSpace += 1;
       }
       await new Promise((r) => setTimeout(r, 800));
     }
@@ -159,7 +160,7 @@ for (const from of spanish) {
     const summary =
       crossings_total === 0 && errored === WINDOWS.length
         ? `every window errored — nothing learned`
-        : `${crossings_total} crossing(s); ${sailings} carry pet availability, ` +
+        : `${crossings_total} date bucket(s), ${sailings} sailing(s); ` +
           `${petCabins} with a pet cabin, ${anyPetSpace} with any pet space` +
           (errored > 0 ? `; ${errored}/${WINDOWS.length} window(s) errored` : "");
     out(`${from} -> ${to}: ${summary}${notes.length ? `  [${notes.join("; ")}]` : ""}`);
