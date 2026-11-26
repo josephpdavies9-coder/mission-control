@@ -14,7 +14,11 @@
 
 import { extractCandidates, petCabinAvailable } from "../src/providers/brittany-ferries/api.js";
 
-const BASE = "https://www.brittany-ferries.co.uk/api/bebop/v1";
+const SITES = [
+  { name: "UK site", base: "https://www.brittany-ferries.co.uk/api/bebop/v1" },
+  { name: "Irish site", base: "https://www.brittanyferries.ie/api/bebop/v1" },
+];
+const BASE = process.env.FERRY_BASE ?? SITES[0]!.base;
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";

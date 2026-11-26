@@ -110,6 +110,15 @@ jobs:
         if: inputs.probeHomebound
         run: pnpm exec tsx scripts/probe-homebound.ts
 
+      # The UK catalogue has no Irish port, which is evidence about the UK site
+      # rather than about the operator: the same API is served per country and
+      # the inventory can differ. This asks each national host directly, since
+      # a Spain-Ireland sailing I merely believe exists is not a port code I
+      # can put in a config.
+      - name: Check each national site for Irish ports
+        if: inputs.probeHomebound
+        run: pnpm exec tsx scripts/probe-irish-site.ts
+
       - name: Summarise captured payloads
         if: ${{ always() && !inputs.probeHomebound }}
         run: |
