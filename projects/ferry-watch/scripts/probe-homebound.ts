@@ -1,0 +1,155 @@
+/**
+ * Finds the Spain-to-home crossings Brittany Ferries actually run in December,
+ * including any Spain-to-Ireland route, and reports pet availability on each.
+ *
+ * Joe is travelling home FROM Spain between 5 and 20 December and wants to
+ * avoid driving up through France, so the question is which direct crossings
+ * out of Spain exist at all, to Britain or to Ireland. Irish port codes are
+ * not in ports.ts, and guessing one would send a request that cannot be told
+ * apart from "no sailings", so they are read from the operator's own public
+ * route catalogue first.
+ *
+ * Run: pnpm exec tsx scripts/probe-homebound.ts
+ */
+
+const BASE = "https://www.brittany-ferries.co.uk/api/bebop/v1";
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+const WINDOWS = [
+  { fromDate: "2026-12-05T00:00:00", toDate: "2026-12-11T23:59:59" },
+  { fromDate: "2026-12-12T00:00:00", toDate: "2026-12-18T23:59:59" },
+  { fromDate: "2026-12-19T00:00:00", toDate: "2026-12-20T23:59:59" },
+];
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Every five-letter port code in the payload, with whatever name sits beside it. */
+function collectPorts(payload: unknown): Map<string, string> {
+  const ports = new Map<string, string>();
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 14) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    const record = asRecord(node);
+    if (!record) return;
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value === "string" && /^[A-Z]{5}$/.test(value)) {
+        const name =
+          [record.name, record.label, record.portName, record.title].find(
+            (candidate) => typeof candidate === "string" && candidate,
+          ) ?? `(seen under "${key}")`;
+        if (!ports.has(value)) ports.set(value, String(name));
+      }
+      walk(value, depth + 1);
+    }
+  };
+  walk(payload, 0);
+  return ports;
+}
+
+async function post(path: string, body: unknown): Promise<{ status: number; json: unknown; text: string }> {
+  const response = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/plain, */*",
+      "accept-language": "en-GB",
+      "user-agent": UA,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let json: unknown = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    // Left null; the raw text is reported instead.
+  }
+  return { status: response.status, json, text };
+}
+
+const out = (line: string) => process.stdout.write(`${line}\n`);
+
+// --- Step one: the public catalogue, so Irish codes come from the operator ---
+const catalogue = await fetch(`${BASE}/route`, {
+  headers: { accept: "application/json", "user-agent": UA },
+});
+out(`GET /route -> HTTP ${catalogue.status}`);
+const cataloguePayload: unknown = await catalogue.json();
+
+const ports = collectPorts(cataloguePayload);
+out(`\nports in the catalogue (${ports.size}):`);
+for (const [code, name] of [...ports].sort(([a], [b]) => a.localeCompare(b))) {
+  out(`  ${code}  ${name}`);
+}
+
+const irish = [...ports.keys()].filter((code) => code.startsWith("IE"));
+const british = [...ports.keys()].filter((code) => code.startsWith("GB"));
+const spanish = [...ports.keys()].filter((code) => code.startsWith("ES"));
+out(`\nSpanish: ${spanish.join(", ") || "none"}`);
+out(`British: ${british.join(", ") || "none"}`);
+out(`Irish:   ${irish.join(", ") || "none found — no Spain-to-Ireland route in the catalogue"}`);
+
+// --- Step two: which of those crossings actually sail in the window ---
+const destinations = [...british, ...irish];
+out(`\nTesting ${spanish.length} x ${destinations.length} crossings out of Spain, 5-20 Dec 2026\n`);
+
+for (const from of spanish) {
+  for (const to of destinations) {
+    let sailings = 0;
+    let petCabins = 0;
+    let anyPetSpace = 0;
+    const notes: string[] = [];
+
+    for (const window of WINDOWS) {
+      const { status, json, text } = await post("/crossing/prices", {
+        bookingReference: null,
+        pets: { smallDogs: 1, largeDogs: 0, cats: 0 },
+        passengers: { adults: 2, children: 0, infants: 0 },
+        vehicle: {
+          type: "CAR",
+          registrations: ["TBC"],
+          height: 183,
+          length: 500,
+          extras: { rearMountedBikeCarrier: null },
+        },
+        departurePort: from,
+        arrivalPort: to,
+        disability: null,
+        direction: "outbound",
+        fromDate: window.fromDate,
+        toDate: window.toDate,
+      });
+
+      if (status !== 200) {
+        notes.push(`HTTP ${status} ${text.slice(0, 80)}`);
+        continue;
+      }
+      const crossings = asRecord(json)?.crossings;
+      if (!Array.isArray(crossings)) continue;
+      for (const crossing of crossings) {
+        const record = asRecord(crossing);
+        const pets = asRecord(record?.petAvailabilities);
+        if (!record || !pets) continue;
+        sailings += 1;
+        if (pets.petCabinAvailable === true) petCabins += 1;
+        if (Object.values(pets).some((flag) => flag === true)) anyPetSpace += 1;
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
+
+    const summary =
+      sailings === 0
+        ? "no sailings in the window"
+        : `${sailings} sailing(s), ${petCabins} with a pet cabin, ${anyPetSpace} with any pet space`;
+    out(`${from} -> ${to}: ${summary}${notes.length ? `  [${notes.join("; ")}]` : ""}`);
+  }
+}

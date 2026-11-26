@@ -24,6 +24,11 @@ on:
         type: boolean
         required: false
         default: false
+      probeHomebound:
+        description: "List Spain-to-home crossings (incl. Ireland) and their pet availability"
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [claude/custom-dog-boats-email-awyeg5]
     paths:
@@ -94,6 +99,15 @@ jobs:
       - name: Find the accommodations request shape
         if: inputs.probeAccommodations
         run: pnpm exec tsx scripts/probe-accommodations.ts
+
+      # Which crossings leave Spain at all in the window, to Britain or to
+      # Ireland, and whether any carry pets. Irish port codes are not in
+      # ports.ts, so they are read from the operator's public catalogue rather
+      # than guessed — a guessed code returns "no sailings", which is
+      # indistinguishable from a route that genuinely does not run.
+      - name: Probe Spain-to-home crossings
+        if: inputs.probeHomebound
+        run: pnpm exec tsx scripts/probe-homebound.ts
 
       - name: Summarise captured payloads
         if: always()
